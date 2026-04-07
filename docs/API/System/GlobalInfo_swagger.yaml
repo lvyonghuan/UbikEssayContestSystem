@@ -1,5 +1,22 @@
 basePath: /api/v1
 definitions:
+  model.Contest:
+    properties:
+      contestEndDate:
+        description: 比赛结束日期，精确到分
+        type: string
+      contestID:
+        type: integer
+      contestIntroduction:
+        description: 比赛简介
+        type: string
+      contestName:
+        description: 比赛名称
+        type: string
+      contestStartDate:
+        description: 比赛开始日期，精确到分
+        type: string
+    type: object
   model.Response:
     properties:
       code:
@@ -33,11 +50,17 @@ info:
   title: 全局信息 API
   version: "1.0"
 paths:
-  /contests/:
+  /contests:
     get:
       consumes:
       - application/json
       description: 获取系统中所有的赛事列表，包括基本信息如赛事ID、名称、状态等
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
       produces:
       - application/json
       responses:
@@ -49,10 +72,41 @@ paths:
             - properties:
                 msg:
                   items:
-                    $ref: '#/definitions/model.Track'
+                    $ref: '#/definitions/model.Contest'
                   type: array
               type: object
       summary: 获取赛事列表
+      tags:
+      - Contests
+  /contests/{contest_id}:
+    get:
+      consumes:
+      - application/json
+      description: 获取指定赛事详情，包括基础信息与时间范围
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 赛事ID
+        in: path
+        name: contest_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 成功返回赛事详情
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.Contest'
+              type: object
+      summary: 获取赛事详情
       tags:
       - Contests
   /tracks/{contest_id}:
@@ -61,6 +115,11 @@ paths:
       - application/json
       description: 获取指定赛事下的所有赛道列表，包括基本信息如赛道ID、名称、状态等
       parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: 赛事ID
         in: path
         name: contest_id
@@ -81,6 +140,37 @@ paths:
                   type: array
               type: object
       summary: 获取赛道列表
+      tags:
+      - Tracks
+  /tracks/detail/{track_id}:
+    get:
+      consumes:
+      - application/json
+      description: 获取指定赛道的详细信息
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 赛道ID
+        in: path
+        name: track_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 成功返回赛道详情
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.Track'
+              type: object
+      summary: 获取赛道详情
       tags:
       - Tracks
 swagger: "2.0"
