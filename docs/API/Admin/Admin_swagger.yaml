@@ -54,6 +54,20 @@ definitions:
         description: 赛道设置，存储为JSON格式
         type: object
     type: object
+  model.Work:
+    properties:
+      authorID:
+        type: integer
+      trackID:
+        type: integer
+      workID:
+        type: integer
+      workInfos:
+        additionalProperties: {}
+        type: object
+      workTitle:
+        type: string
+    type: object
   token.ResponseToken:
     properties:
       access_token:
@@ -307,6 +321,154 @@ paths:
                   $ref: '#/definitions/model.Track'
               type: object
       summary: 更新赛道
+      tags:
+      - Admin
+  /admin/works/{work_id}:
+    delete:
+      consumes:
+      - application/json
+      description: 管理员根据作品ID删除作品及其存储文件
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作品ID
+        in: path
+        name: work_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 删除作品
+      tags:
+      - Admin
+    get:
+      consumes:
+      - application/json
+      description: 管理员根据作品ID获取作品详细信息
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作品ID
+        in: path
+        name: work_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.Work'
+              type: object
+      summary: 获取作品详情
+      tags:
+      - Admin
+  /admin/works/{work_id}/file:
+    get:
+      consumes:
+      - application/json
+      description: 管理员根据作品ID获取作品文件
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作品ID
+        in: path
+        name: work_id
+        required: true
+        type: integer
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: 作品文件
+          schema:
+            type: file
+      summary: 获取作品文件
+      tags:
+      - Admin
+  /admin/works/author/{author_id}:
+    get:
+      consumes:
+      - application/json
+      description: 管理员根据作者ID获取该作者的全部作品
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作者ID
+        in: path
+        name: author_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  items:
+                    $ref: '#/definitions/model.Work'
+                  type: array
+              type: object
+      summary: 按作者获取作品列表
+      tags:
+      - Admin
+  /admin/works/track/{track_id}:
+    get:
+      consumes:
+      - application/json
+      description: 管理员根据赛道ID获取该赛道下的全部作品
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 赛道ID
+        in: path
+        name: track_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  items:
+                    $ref: '#/definitions/model.Work'
+                  type: array
+              type: object
+      summary: 按赛道获取作品列表
       tags:
       - Admin
 swagger: "2.0"

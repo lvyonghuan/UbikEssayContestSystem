@@ -1,17 +1,43 @@
 package admin
 
 import (
+	"errors"
 	"main/conf"
+	_ "main/docs/API/Admin"
 	"main/model"
 	_const "main/util/const"
 	"main/util/log"
 	"main/util/response"
 	"main/util/token"
+	"path/filepath"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
+)
+
+var (
+	checkTokenFn        = token.CheckToken
+	checkRefreshTokenFn = token.CheckRefreshToken
+	runServerFn         = func(r *gin.Engine, port string) error {
+		return r.Run(":" + port)
+	}
+
+	loginSrcFn         = loginSrc
+	refreshTokenSrcFn  = refreshTokenSrc
+	createContestSrcFn = createContestSrc
+	updateContestSrcFn = updateContestSrc
+	deleteContestSrcFn = deleteContestSrc
+	createTrackSrcFn   = createTrackSrc
+	updateTrackSrcFn   = updateTrackSrc
+	deleteTrackSrcFn   = deleteTrackSrc
+
+	getWorkByIDSrcFn        = getWorkByIDSrc
+	getWorkFilePathSrcFn    = getWorkFilePathSrc
+	getWorksByTrackIDSrcFn  = getWorksByTrackIDSrc
+	getWorksByAuthorIDSrcFn = getWorksByAuthorIDSrc
+	deleteWorkSrcFn         = deleteWorkSrc
 )
 
 // InitRouter 初始化管理后台路由
@@ -21,6 +47,11 @@ import (
 // @host            localhost:8081
 // @BasePath        /api/v1
 func InitRouter(conf conf.APIConfig) {
+	r := buildAdminRouter()
+	_ = runServerFn(r, conf.AdminPort)
+}
+
+func buildAdminRouter() *gin.Engine {
 	r := gin.Default()
 
 	// 挂载swagger路由
@@ -56,16 +87,16 @@ func InitRouter(conf conf.APIConfig) {
 
 			works := admin.Group("/works", checkAccessToken)
 			{
-				works.GET("/:work_id")          //获取作品详细信息
-				works.GET("/:work_id/file")     //获取作品文件，按照./submissions/{track_id}/{author_id}/{work_id}.suffix的形式存储
-				works.GET("/track/:track_id")   //获取指定赛道的所有作品
-				works.GET("/author/:author_id") //获取指定作者的所有作品
-				works.DELETE("/:work_id")       //删除指定作品（同时要删除存储）
+				works.GET("/:work_id", getWorkByID)                 //获取作品详细信息
+				works.GET("/:work_id/file", getWorkFile)            //获取作品文件，按照./submissions/{track_id}/{author_id}/{work_id}.suffix的形式存储
+				works.GET("/track/:track_id", getWorksByTrackID)    //获取指定赛道的所有作品
+				works.GET("/author/:author_id", getWorksByAuthorID) //获取指定作者的所有作品
+				works.DELETE("/:work_id", deleteWork)               //删除指定作品（同时要删除存储）
 			}
 		}
 	}
 
-	r.Run(":" + conf.AdminPort)
+	return r
 }
 
 // 中间件  ------------------------------------------
@@ -73,7 +104,7 @@ func InitRouter(conf conf.APIConfig) {
 func checkAccessToken(c *gin.Context) {
 	bearerToken := c.GetHeader("Authorization")
 
-	id, role, err := token.CheckToken(bearerToken)
+	id, role, err := checkTokenFn(bearerToken)
 	if err != nil {
 		response.RespError(c, 401, err.Error())
 		c.Abort()
@@ -110,7 +141,7 @@ func login(c *gin.Context) {
 		return
 	}
 
-	tokens, err := loginSrc(admin)
+	tokens, err := loginSrcFn(admin)
 	if err != nil {
 		log.Logger.Warn("Admin login error: " + err.Error())
 		response.RespError(c, 500, "error: Admin login error")
@@ -132,7 +163,7 @@ func login(c *gin.Context) {
 func refreshToken(c *gin.Context) {
 	bearerToken := c.GetHeader("Authorization")
 
-	id, role, err := token.CheckRefreshToken(bearerToken)
+	id, role, err := checkRefreshTokenFn(bearerToken)
 	if err != nil {
 		response.RespError(c, 401, err.Error())
 		c.Abort()
@@ -145,7 +176,7 @@ func refreshToken(c *gin.Context) {
 		return
 	}
 
-	tokens, err := refreshTokenSrc(id)
+	tokens, err := refreshTokenSrcFn(id)
 	if err != nil {
 		log.Logger.Warn("Admin refresh token error: " + err.Error())
 		response.RespError(c, 500, "error: Admin refresh token error")
@@ -176,7 +207,7 @@ func createContest(c *gin.Context) {
 		return
 	}
 
-	err = createContestSrc(adminID, &contest)
+	err = createContestSrcFn(adminID, &contest)
 	if err != nil {
 		response.RespError(c, 500, "error: Create contest error")
 		return
@@ -212,7 +243,7 @@ func updateContest(c *gin.Context) {
 		return
 	}
 
-	err = updateContestSrc(c.GetInt("admin_token_id"), contestID, &contest)
+	err = updateContestSrcFn(c.GetInt("admin_token_id"), contestID, &contest)
 	if err != nil {
 		response.RespError(c, 500, "error: Update contest error")
 		return
@@ -241,7 +272,7 @@ func deleteContest(c *gin.Context) {
 		return
 	}
 
-	err = deleteContestSrc(adminID, contestID)
+	err = deleteContestSrcFn(adminID, contestID)
 	if err != nil {
 		response.RespError(c, 500, "error: Delete contest error")
 		return
@@ -270,7 +301,7 @@ func createTrack(c *gin.Context) {
 		return
 	}
 
-	err = createTrackSrc(adminID, &track)
+	err = createTrackSrcFn(adminID, &track)
 	if err != nil {
 		response.RespError(c, 500, "error: Create track error")
 		return
@@ -308,7 +339,7 @@ func updateTrack(c *gin.Context) {
 		return
 	}
 
-	err = updateTrackSrc(adminID, trackID, &track)
+	err = updateTrackSrcFn(adminID, trackID, &track)
 	if err != nil {
 		response.RespError(c, 500, "error: Update track error")
 		return
@@ -337,9 +368,146 @@ func deleteTrack(c *gin.Context) {
 		return
 	}
 
-	err = deleteTrackSrc(adminID, trackID)
+	err = deleteTrackSrcFn(adminID, trackID)
 	if err != nil {
 		response.RespError(c, 500, "error: Delete track error")
+		return
+	}
+
+	response.RespSuccess(c, nil)
+}
+
+// @Summary 获取作品详情
+// @Description 管理员根据作品ID获取作品详细信息
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param work_id path int true "作品ID"
+// @Success 200 {object} model.Response{msg=model.Work} "获取成功"
+// @Router /admin/works/{work_id} [get]
+func getWorkByID(c *gin.Context) {
+	workID, err := strconv.Atoi(c.Param("work_id"))
+	if err != nil {
+		response.RespError(c, 400, "error: Invalid work_id")
+		return
+	}
+
+	work, err := getWorkByIDSrcFn(workID)
+	if err != nil {
+		if errors.Is(err, errWorkNotFound) {
+			response.RespError(c, 404, err.Error())
+			return
+		}
+		response.RespError(c, 500, "error: Get work error")
+		return
+	}
+
+	response.RespSuccess(c, work)
+}
+
+// @Summary 获取作品文件
+// @Description 管理员根据作品ID获取作品文件
+// @Tags Admin
+// @Accept application/json
+// @Produce application/octet-stream
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param work_id path int true "作品ID"
+// @Success 200 {file} file "作品文件"
+// @Router /admin/works/{work_id}/file [get]
+func getWorkFile(c *gin.Context) {
+	workID, err := strconv.Atoi(c.Param("work_id"))
+	if err != nil {
+		response.RespError(c, 400, "error: Invalid work_id")
+		return
+	}
+
+	filePath, err := getWorkFilePathSrcFn(workID)
+	if err != nil {
+		if errors.Is(err, errWorkNotFound) || errors.Is(err, errWorkFileNotFound) {
+			response.RespError(c, 404, err.Error())
+			return
+		}
+		response.RespError(c, 500, "error: Get work file error")
+		return
+	}
+
+	c.FileAttachment(filePath, filepath.Base(filePath))
+}
+
+// @Summary 按赛道获取作品列表
+// @Description 管理员根据赛道ID获取该赛道下的全部作品
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param track_id path int true "赛道ID"
+// @Success 200 {object} model.Response{msg=[]model.Work} "获取成功"
+// @Router /admin/works/track/{track_id} [get]
+func getWorksByTrackID(c *gin.Context) {
+	trackID, err := strconv.Atoi(c.Param("track_id"))
+	if err != nil {
+		response.RespError(c, 400, "error: Invalid track_id")
+		return
+	}
+
+	works, err := getWorksByTrackIDSrcFn(trackID)
+	if err != nil {
+		response.RespError(c, 500, "error: Get works by track_id error")
+		return
+	}
+
+	response.RespSuccess(c, works)
+}
+
+// @Summary 按作者获取作品列表
+// @Description 管理员根据作者ID获取该作者的全部作品
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param author_id path int true "作者ID"
+// @Success 200 {object} model.Response{msg=[]model.Work} "获取成功"
+// @Router /admin/works/author/{author_id} [get]
+func getWorksByAuthorID(c *gin.Context) {
+	authorID, err := strconv.Atoi(c.Param("author_id"))
+	if err != nil {
+		response.RespError(c, 400, "error: Invalid author_id")
+		return
+	}
+
+	works, err := getWorksByAuthorIDSrcFn(authorID)
+	if err != nil {
+		response.RespError(c, 500, "error: Get works by author_id error")
+		return
+	}
+
+	response.RespSuccess(c, works)
+}
+
+// @Summary 删除作品
+// @Description 管理员根据作品ID删除作品及其存储文件
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param work_id path int true "作品ID"
+// @Success 200 {object} model.Response{} "删除成功"
+// @Router /admin/works/{work_id} [delete]
+func deleteWork(c *gin.Context) {
+	workID, err := strconv.Atoi(c.Param("work_id"))
+	if err != nil {
+		response.RespError(c, 400, "error: Invalid work_id")
+		return
+	}
+
+	err = deleteWorkSrcFn(c.GetInt("admin_token_id"), workID)
+	if err != nil {
+		if errors.Is(err, errWorkNotFound) {
+			response.RespError(c, 404, err.Error())
+			return
+		}
+		response.RespError(c, 500, "error: Delete work error")
 		return
 	}
 

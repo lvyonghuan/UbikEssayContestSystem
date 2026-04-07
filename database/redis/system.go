@@ -31,7 +31,7 @@ func CreateTrack(track model.Track, contest model.Contest) error {
 }
 
 func DeleteTrack(trackID int) error {
-	err := rdb.client.Del(rdb.ctx, _const.RedisTrackEndDatePrefix+strconv.Itoa(trackID)).Err()
+	err := rdb.client.Del(rdb.ctx, _const.RedisTrackStartDatePrefix+strconv.Itoa(trackID)).Err()
 	if err != nil {
 		return uerr.NewError(err)
 	}
@@ -45,7 +45,7 @@ func DeleteTrack(trackID int) error {
 }
 
 func GetStartAndEndDate(trackID int) (start, end int64, err error) {
-	startStr, err := rdb.client.Get(rdb.ctx, _const.RedisTrackEndDatePrefix+strconv.Itoa(trackID)).Result()
+	startStr, err := rdb.client.Get(rdb.ctx, _const.RedisTrackStartDatePrefix+strconv.Itoa(trackID)).Result()
 	if err != nil {
 		return 0, 0, uerr.NewError(err)
 	}
@@ -69,7 +69,16 @@ func GetStartAndEndDate(trackID int) (start, end int64, err error) {
 }
 
 func SetUploadFilePermission(authorID, trackID, workID int) error {
-	err := rdb.client.Set(rdb.ctx, _const.RedisUploadPermissionPrefix+"-"+strconv.Itoa(workID), strconv.Itoa(trackID)+"-"+strconv.Itoa(authorID), 5*time.Minute).Err()
+	err := rdb.client.Set(rdb.ctx, _const.RedisUploadPermissionPrefix+"-"+strconv.Itoa(workID), strconv.Itoa(authorID)+"-"+strconv.Itoa(trackID), 5*time.Minute).Err()
+	if err != nil {
+		return uerr.NewError(err)
+	}
+
+	return nil
+}
+
+func DeleteUploadFilePermission(workID int) error {
+	err := rdb.client.Del(rdb.ctx, _const.RedisUploadPermissionPrefix+"-"+strconv.Itoa(workID)).Err()
 	if err != nil {
 		return uerr.NewError(err)
 	}

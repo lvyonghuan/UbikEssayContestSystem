@@ -2,16 +2,26 @@ package token
 
 import (
 	"errors"
+	"strings"
 )
 
-func CheckToken(tokenString string) (int64, string, error) {
-	// Get token from header
+func parseBearerToken(tokenString string) (string, error) {
 	if tokenString == "" {
-		err := errors.New("unauthorized: token is missing")
-		return 0, "", err
+		return "", errors.New("unauthorized: token is missing")
 	}
 
-	tokenStr := tokenString[len("Bearer "):]
+	if !strings.HasPrefix(tokenString, "Bearer ") || len(tokenString) <= len("Bearer ") {
+		return "", errors.New("unauthorized: invalid token format")
+	}
+
+	return strings.TrimSpace(tokenString[len("Bearer "):]), nil
+}
+
+func CheckToken(tokenString string) (int64, string, error) {
+	tokenStr, err := parseBearerToken(tokenString)
+	if err != nil {
+		return 0, "", err
+	}
 
 	// Validate token
 	userInterface, err := ParseAccessToken(tokenStr)
@@ -24,13 +34,10 @@ func CheckToken(tokenString string) (int64, string, error) {
 }
 
 func CheckRefreshToken(tokenString string) (int64, string, error) {
-	// Get token from header
-	if tokenString == "" {
-		err := errors.New("unauthorized: token is missing")
+	tokenStr, err := parseBearerToken(tokenString)
+	if err != nil {
 		return 0, "", err
 	}
-
-	tokenStr := tokenString[len("Bearer "):]
 
 	// Validate token
 	userInterface, err := ParseRefreshToken(tokenStr)

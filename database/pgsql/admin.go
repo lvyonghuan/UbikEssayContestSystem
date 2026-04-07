@@ -106,3 +106,16 @@ func CreateActionLog(actionLog model.ActionLog) error {
 
 	return nil
 }
+
+func GetWorkByID(workID int) (model.Work, error) {
+	return getSubmissionByID(workID)
+}
+
+func DeleteWorkByID(workID int) error {
+	work, err := getSubmissionByID(workID)
+	if err != nil {
+		return err
+	}
+
+	return DeleteWork(&work)
+}
