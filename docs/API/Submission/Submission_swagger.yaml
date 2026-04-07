@@ -1,0 +1,316 @@
+basePath: /api/v1
+definitions:
+  model.Author:
+    properties:
+      authorEmail:
+        type: string
+      authorID:
+        type: integer
+      authorInfos:
+        additionalProperties: {}
+        type: object
+      authorName:
+        type: string
+      password:
+        type: string
+      penName:
+        type: string
+    type: object
+  model.Response:
+    properties:
+      code:
+        description: 状态码，和http状态码剥离，以分离网络和业务
+        example: 200
+        type: integer
+      msg:
+        description: 信息。可以是NULL，也可以是成功时返回的结构体，也可以是失败时的错误信息
+    type: object
+  model.Work:
+    properties:
+      authorID:
+        type: integer
+      trackID:
+        type: integer
+      workID:
+        type: integer
+      workInfos:
+        additionalProperties: {}
+        type: object
+      workTitle:
+        type: string
+    type: object
+  token.ResponseToken:
+    properties:
+      access_token:
+        type: string
+      refresh_token:
+        type: string
+    type: object
+host: localhost:80
+info:
+  contact: {}
+  description: Ubik 稿件提交系统接口文档
+  title: 作者端API
+  version: "1.0"
+paths:
+  /author:
+    put:
+      consumes:
+      - application/json
+      description: 更新作者信息接口，接受新的作者信息并更新数据库中的记录
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 新的作者信息
+        in: body
+        name: author
+        required: true
+        schema:
+          $ref: '#/definitions/model.Author'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 更新作者信息
+      tags:
+      - 作者端
+  /author/login:
+    post:
+      consumes:
+      - application/json
+      description: 作者登录接口，返回访问令牌和刷新令牌
+      parameters:
+      - description: 作者登录信息
+        in: body
+        name: author
+        required: true
+        schema:
+          $ref: '#/definitions/model.Author'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 登录成功，返回访问令牌和刷新令牌
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/token.ResponseToken'
+              type: object
+      summary: 作者登录
+      tags:
+      - 作者端
+  /author/refresh:
+    get:
+      consumes:
+      - application/json
+      description: 刷新访问令牌，接受刷新令牌并返回新的访问令牌和刷新令牌
+      parameters:
+      - description: Bearer {refresh_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 刷新成功，返回新的访问令牌和刷新令牌
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/token.ResponseToken'
+              type: object
+      summary: 刷新令牌
+      tags:
+      - 作者端
+  /author/register:
+    post:
+      consumes:
+      - application/json
+      description: 作者注册接口，接受作者信息并创建新账号
+      parameters:
+      - description: 作者注册信息
+        in: body
+        name: author
+        required: true
+        schema:
+          $ref: '#/definitions/model.Author'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 注册成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 作者注册
+      tags:
+      - 作者端
+  /submission:
+    delete:
+      consumes:
+      - application/json
+      description: 删除提交记录接口，接受作品ID并删除对应的作品记录
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作品信息
+        in: body
+        name: work
+        required: true
+        schema:
+          $ref: '#/definitions/model.Work'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  type: string
+              type: object
+      summary: 删除提交记录
+      tags:
+      - 作者端
+    post:
+      consumes:
+      - multipart/form-data
+      description: 提交作品接口，接受作品信息和文件并创建新的作品记录
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作品信息
+        in: body
+        name: work
+        required: true
+        schema:
+          $ref: '#/definitions/model.Work'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 提交成功，返回提交的作品信息
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.Work'
+              type: object
+      summary: 提交作品
+      tags:
+      - 作者端
+    put:
+      consumes:
+      - multipart/form-data
+      description: 更新提交记录接口，接受新的作品信息并更新数据库中的记录
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 新的作品信息
+        in: body
+        name: work
+        required: true
+        schema:
+          $ref: '#/definitions/model.Work'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功，返回更新后的作品信息
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.Work'
+              type: object
+      summary: 更新提交记录
+      tags:
+      - 作者端
+  /submission/{id}:
+    get:
+      consumes:
+      - application/json
+      description: 获取提交记录接口，返回作者的所有提交记录
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作者ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功，返回提交记录列表
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  items:
+                    $ref: '#/definitions/model.Work'
+                  type: array
+              type: object
+      summary: 获取提交记录
+      tags:
+      - 作者端
+  /submission/file:
+    post:
+      consumes:
+      - multipart/form-data
+      description: 上传提交文件接口，接受作品ID和文件并保存到服务器
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作品ID
+        in: formData
+        name: work_id
+        required: true
+        type: integer
+      - description: 提交文件
+        in: formData
+        name: article_file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 上传成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 上传提交文件
+      tags:
+      - 作者端
+swagger: "2.0"

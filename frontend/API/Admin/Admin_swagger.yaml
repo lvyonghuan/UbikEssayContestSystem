@@ -1,0 +1,312 @@
+basePath: /api/v1
+definitions:
+  model.Admin:
+    properties:
+      adminEmail:
+        type: string
+      adminID:
+        type: integer
+      adminName:
+        type: string
+      password:
+        type: string
+    type: object
+  model.Contest:
+    properties:
+      contestEndDate:
+        description: 比赛结束日期，精确到分
+        type: string
+      contestID:
+        type: integer
+      contestIntroduction:
+        description: 比赛简介
+        type: string
+      contestName:
+        description: 比赛名称
+        type: string
+      contestStartDate:
+        description: 比赛开始日期，精确到分
+        type: string
+    type: object
+  model.Response:
+    properties:
+      code:
+        description: 状态码，和http状态码剥离，以分离网络和业务
+        example: 200
+        type: integer
+      msg:
+        description: 信息。可以是NULL，也可以是成功时返回的结构体，也可以是失败时的错误信息
+    type: object
+  model.Track:
+    properties:
+      contestID:
+        type: integer
+      trackDescription:
+        description: 赛道描述
+        type: string
+      trackID:
+        type: integer
+      trackName:
+        description: 赛道名称
+        type: string
+      trackSettings:
+        additionalProperties: {}
+        description: 赛道设置，存储为JSON格式
+        type: object
+    type: object
+  token.ResponseToken:
+    properties:
+      access_token:
+        type: string
+      refresh_token:
+        type: string
+    type: object
+host: localhost:8081
+info:
+  contact: {}
+  description: Ubik 系统管理后台服务接口文档
+  title: 管理后台 API
+  version: "1.0"
+paths:
+  /admin/contest:
+    post:
+      consumes:
+      - application/json
+      description: 管理员创建新的征文活动
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 征文活动信息
+        in: body
+        name: contest
+        required: true
+        schema:
+          $ref: '#/definitions/model.Contest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 活动创建成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.Contest'
+              type: object
+      summary: 创建征文活动
+      tags:
+      - Admin
+  /admin/contest/{contest_id}:
+    delete:
+      consumes:
+      - application/json
+      description: 管理员删除指定ID的征文活动
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 征文活动ID
+        in: path
+        name: contest_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 活动删除成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 删除征文活动
+      tags:
+      - Admin
+    put:
+      consumes:
+      - application/json
+      description: 管理员更新指定ID的征文活动
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 征文活动ID
+        in: path
+        name: contest_id
+        required: true
+        type: integer
+      - description: 更新后的征文活动信息
+        in: body
+        name: contest
+        required: true
+        schema:
+          $ref: '#/definitions/model.Contest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 活动更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.Contest'
+              type: object
+      summary: 更新征文活动
+      tags:
+      - Admin
+  /admin/login:
+    post:
+      consumes:
+      - application/json
+      description: 管理员使用用户名和密码登录，成功后返回JWT Token和Refresh Token
+      parameters:
+      - description: 管理员登录信息
+        in: body
+        name: admin
+        required: true
+        schema:
+          $ref: '#/definitions/model.Admin'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 登录成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/token.ResponseToken'
+              type: object
+      summary: 管理员后台登录
+      tags:
+      - Admin
+  /admin/refresh:
+    post:
+      consumes:
+      - application/json
+      description: 管理员使用Refresh Token刷新JWT Token，成功后返回新的JWT Token和Refresh Token
+      parameters:
+      - description: Bearer {refresh_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 刷新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/token.ResponseToken'
+              type: object
+      summary: 刷新管理员JWT Token
+      tags:
+      - Admin
+  /admin/track:
+    post:
+      consumes:
+      - application/json
+      description: 管理员创建新的赛道
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 赛道信息
+        in: body
+        name: track
+        required: true
+        schema:
+          $ref: '#/definitions/model.Track'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 赛道创建成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.Track'
+              type: object
+      summary: 创建赛道
+      tags:
+      - Admin
+  /admin/track/{track_id}:
+    delete:
+      consumes:
+      - application/json
+      description: 管理员删除指定ID的赛道
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 赛道ID
+        in: path
+        name: track_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 赛道删除成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 删除赛道
+      tags:
+      - Admin
+    put:
+      consumes:
+      - application/json
+      description: 管理员更新指定ID的赛道
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 赛道ID
+        in: path
+        name: track_id
+        required: true
+        type: integer
+      - description: 更新后的赛道信息
+        in: body
+        name: track
+        required: true
+        schema:
+          $ref: '#/definitions/model.Track'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 赛道更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.Track'
+              type: object
+      summary: 更新赛道
+      tags:
+      - Admin
+swagger: "2.0"

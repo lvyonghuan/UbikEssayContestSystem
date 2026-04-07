@@ -1,0 +1,35 @@
+# conf/conf.toml
+[System.Email]
+EmailAddress = "test@test.com"
+EmailAPPPassword = "1"
+SMTPHost = "test.smtp.com"
+SMTPPort = 587
+
+[System.Token]
+AccessTokenExpire = 36000
+RefreshTokenExpire = 72000
+
+[API]
+IsDebug = true
+SubmissionsPort = "80"
+JudgePort = "8080"
+AdminPort = "8081"
+GlobalInfoPort = "8082"
+
+[DB]
+Host = "127.0.0.1"
+Port = "5432"
+User = "dbuser"
+Password = "dbpassword"
+LogLevel = 1
+
+[Redis]
+Host = ""
+Port = "6379"
+Password = ""
+DB = 0
+
+[Log]
+Level = 5
+WriteLevel = 5
+FilePath = "./logs/"
