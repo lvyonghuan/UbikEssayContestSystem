@@ -37,4 +37,5 @@ conf.toml
 .DS_Store
 Thumbs.db
 
-./tests_files
+./tests_files/
+./submissions/
