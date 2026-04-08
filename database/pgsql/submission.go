@@ -4,6 +4,7 @@ import (
 	"main/model"
 
 	"github.com/lvyonghuan/Ubik-Util/uerr"
+	"gorm.io/datatypes"
 )
 
 func SubmissionWork(work *model.Work) error {
@@ -65,6 +66,47 @@ func UpdateWork(work *model.Work) error {
 
 func DeleteWork(work *model.Work) error {
 	err := postgresDB.Delete(work).Error
+	if err != nil {
+		return uerr.NewError(err)
+	}
+
+	return nil
+}
+
+func CountWorksByAuthorAndTrack(authorID int, trackID int) (int64, error) {
+	var count int64
+	err := postgresDB.Model(&model.Work{}).
+		Where("author_id = ? AND track_id = ?", authorID, trackID).
+		Count(&count).Error
+	if err != nil {
+		return 0, uerr.NewError(err)
+	}
+
+	return count, nil
+}
+
+func PatchWorkInfos(workID int, patch map[string]any) error {
+	if len(patch) == 0 {
+		return nil
+	}
+
+	var work model.Work
+	err := postgresDB.Where("work_id = ?", workID).First(&work).Error
+	if err != nil {
+		return uerr.NewError(err)
+	}
+
+	if work.WorkInfos == nil {
+		work.WorkInfos = map[string]interface{}{}
+	}
+
+	for k, v := range patch {
+		work.WorkInfos[k] = v
+	}
+
+	err = postgresDB.Model(&model.Work{}).
+		Where("work_id = ?", workID).
+		Update("work_infos", datatypes.JSONMap(work.WorkInfos)).Error
 	if err != nil {
 		return uerr.NewError(err)
 	}

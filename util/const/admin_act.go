@@ -10,6 +10,8 @@ const (
 	Roles       = "roles"
 	Permissions = "permissions"
 	Admins      = "admins"
+	Scripts     = "scripts"
+	ScriptFlows = "script_flows"
 )
 
 const (

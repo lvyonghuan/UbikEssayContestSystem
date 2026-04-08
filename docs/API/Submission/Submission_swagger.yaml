@@ -155,7 +155,7 @@ paths:
       summary: 作者注册
       tags:
       - 作者端
-  /submission:
+  /author/submission:
     delete:
       consumes:
       - application/json
@@ -249,7 +249,7 @@ paths:
       summary: 更新提交记录
       tags:
       - 作者端
-  /submission/{id}:
+  /author/submission/{id}:
     get:
       consumes:
       - application/json
@@ -282,7 +282,7 @@ paths:
       summary: 获取提交记录
       tags:
       - 作者端
-  /submission/file:
+  /author/submission/file:
     post:
       consumes:
       - multipart/form-data

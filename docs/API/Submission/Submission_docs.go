@@ -180,7 +180,7 @@ const docTemplateSubmission = `{
                 }
             }
         },
-        "/submission": {
+        "/author/submission": {
             "put": {
                 "description": "更新提交记录接口，接受新的作品信息并更新数据库中的记录",
                 "consumes": [
@@ -335,7 +335,7 @@ const docTemplateSubmission = `{
                 }
             }
         },
-        "/submission/file": {
+        "/author/submission/file": {
             "post": {
                 "description": "上传提交文件接口，接受作品ID和文件并保存到服务器",
                 "consumes": [
@@ -381,7 +381,7 @@ const docTemplateSubmission = `{
                 }
             }
         },
-        "/submission/{id}": {
+        "/author/submission/{id}": {
             "get": {
                 "description": "获取提交记录接口，返回作者的所有提交记录",
                 "consumes": [

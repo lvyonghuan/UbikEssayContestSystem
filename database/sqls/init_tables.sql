@@ -179,6 +179,78 @@ INSERT INTO role_permissions (role_id, permission_id) VALUES ((SELECT role_id FR
 INSERT INTO admins (admin_name, password) VALUES ('superadmin', 'superpassword');
 INSERT INTO admin_roles (admin_id, role_id) VALUES ((SELECT admin_id FROM admins WHERE admin_name = 'superadmin'), (SELECT role_id FROM roles WHERE role_name = 'superadmin'));
 
+-- 脚本定义表
+-- script_key: 全局唯一键，便于版本目录管理（scripts/{script_key}/v{n}/）
+-- interpreter: 执行解释器（如 python3/bash/node）
+CREATE TABLE script_definitions (
+    script_id SERIAL PRIMARY KEY,
+    script_key VARCHAR(255) NOT NULL UNIQUE,
+    script_name VARCHAR(255) NOT NULL,
+    interpreter VARCHAR(64) NOT NULL,
+    description TEXT,
+    is_enabled BOOLEAN DEFAULT TRUE,
+    meta JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 脚本版本表（不可变）
+CREATE TABLE script_versions (
+    version_id SERIAL PRIMARY KEY,
+    script_id INT NOT NULL REFERENCES script_definitions(script_id) ON DELETE CASCADE,
+    version_num INT NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    relative_path TEXT NOT NULL,
+    checksum VARCHAR(128),
+    is_active BOOLEAN DEFAULT FALSE,
+    created_by INT REFERENCES admins(admin_id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(script_id, version_num)
+);
+
+-- 脚本流程定义表
+CREATE TABLE script_flows (
+    flow_id SERIAL PRIMARY KEY,
+    flow_key VARCHAR(255) NOT NULL UNIQUE,
+    flow_name VARCHAR(255) NOT NULL,
+    description TEXT,
+    is_enabled BOOLEAN DEFAULT TRUE,
+    meta JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 脚本流程步骤表（顺序链）
+CREATE TABLE script_flow_steps (
+    step_id SERIAL PRIMARY KEY,
+    flow_id INT NOT NULL REFERENCES script_flows(flow_id) ON DELETE CASCADE,
+    step_order INT NOT NULL,
+    step_name VARCHAR(255) NOT NULL,
+    script_id INT NOT NULL REFERENCES script_definitions(script_id) ON DELETE CASCADE,
+    script_version_id INT REFERENCES script_versions(version_id) ON DELETE SET NULL,
+    timeout_ms INT DEFAULT 5000,
+    failure_strategy VARCHAR(32) DEFAULT 'fail_close',
+    input_template JSONB,
+    is_enabled BOOLEAN DEFAULT TRUE,
+    UNIQUE(flow_id, step_order)
+);
+
+-- 脚本流程挂载表
+-- scope: submission/system/judge
+-- event_key: submission_pre/file_pre/file_post/... 
+-- target_type: track/global/contest
+CREATE TABLE script_flow_mounts (
+    mount_id SERIAL PRIMARY KEY,
+    flow_id INT NOT NULL REFERENCES script_flows(flow_id) ON DELETE CASCADE,
+    scope VARCHAR(64) NOT NULL,
+    event_key VARCHAR(128) NOT NULL,
+    target_type VARCHAR(64) NOT NULL,
+    target_id INT NOT NULL,
+    is_enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(scope, event_key, target_type, target_id)
+);
+
 -- 动作记录表，记录管理员的操作日志
 CREATE TABLE action_logs (
     log_id SERIAL PRIMARY KEY,

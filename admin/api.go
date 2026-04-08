@@ -93,6 +93,8 @@ func buildAdminRouter() *gin.Engine {
 				works.GET("/author/:author_id", getWorksByAuthorID) //获取指定作者的所有作品
 				works.DELETE("/:work_id", deleteWork)               //删除指定作品（同时要删除存储）
 			}
+
+			registerScriptRoutes(admin)
 		}
 	}
 

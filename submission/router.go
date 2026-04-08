@@ -2,6 +2,7 @@ package submission
 
 import (
 	"main/conf"
+	_ "main/docs/API/Submission"
 	"main/model"
 	_const "main/util/const"
 	"main/util/log"
@@ -13,6 +14,13 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
+var (
+	checkTokenFn = token.CheckToken
+	runServerFn  = func(r *gin.Engine, port string) error {
+		return r.Run(":" + port)
+	}
+)
+
 // InitRouter
 // @title           作者端API
 // @version         1.0
@@ -20,6 +28,11 @@ import (
 // @host            localhost:80
 // @BasePath        /api/v1
 func InitRouter(conf conf.APIConfig) {
+	r := buildSubmissionRouter()
+	_ = runServerFn(r, conf.SubmissionsPort)
+}
+
+func buildSubmissionRouter() *gin.Engine {
 	r := gin.Default()
 
 	// 挂载swagger路由
@@ -36,7 +49,7 @@ func InitRouter(conf conf.APIConfig) {
 			submission := author.Group("/submission")
 			{
 				submission.GET("/:id", checkAccessToken, getSubmissions)
-				submission.POST("/file", checkAccessToken)
+				submission.POST("/file", checkAccessToken, saveSubmissionFile)
 				submission.POST("", checkAccessToken, checkWorkSubmissionValid, submissionWork)
 				submission.PUT("", checkAccessToken, checkWorkSubmissionValid, updateSubmission)
 				submission.DELETE("", checkAccessToken, checkWorkSubmissionValid, deleteSubmission)
@@ -44,15 +57,13 @@ func InitRouter(conf conf.APIConfig) {
 		}
 	}
 
-	//FIXME 文件操作
-
-	r.Run(":" + conf.SubmissionsPort)
+	return r
 }
 
 func checkAccessToken(c *gin.Context) {
 	bearerToken := c.GetHeader("Authorization")
 
-	id, role, err := token.CheckToken(bearerToken)
+	id, role, err := checkTokenFn(bearerToken)
 	if err != nil {
 		response.RespError(c, 401, err.Error())
 		c.Abort()

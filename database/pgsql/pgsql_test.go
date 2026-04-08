@@ -26,6 +26,11 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		`CREATE TABLE contests (contest_id INTEGER PRIMARY KEY AUTOINCREMENT, contest_name TEXT, contest_start_date DATE, contest_end_date DATE, contest_introduction TEXT);`,
 		`CREATE TABLE tracks (track_id INTEGER PRIMARY KEY AUTOINCREMENT, track_name TEXT, contest_id INTEGER, track_description TEXT, track_settings TEXT);`,
 		`CREATE TABLE works (work_id INTEGER PRIMARY KEY AUTOINCREMENT, work_title TEXT, track_id INTEGER, author_id INTEGER, work_infos TEXT);`,
+		`CREATE TABLE script_definitions (script_id INTEGER PRIMARY KEY AUTOINCREMENT, script_key TEXT UNIQUE, script_name TEXT, interpreter TEXT, description TEXT, is_enabled BOOLEAN, meta TEXT, created_at DATETIME, updated_at DATETIME);`,
+		`CREATE TABLE script_versions (version_id INTEGER PRIMARY KEY AUTOINCREMENT, script_id INTEGER NOT NULL, version_num INTEGER NOT NULL, file_name TEXT NOT NULL, relative_path TEXT NOT NULL, checksum TEXT, is_active BOOLEAN, created_by INTEGER, created_at DATETIME, UNIQUE(script_id, version_num));`,
+		`CREATE TABLE script_flows (flow_id INTEGER PRIMARY KEY AUTOINCREMENT, flow_key TEXT UNIQUE, flow_name TEXT, description TEXT, is_enabled BOOLEAN, meta TEXT, created_at DATETIME, updated_at DATETIME);`,
+		`CREATE TABLE script_flow_steps (step_id INTEGER PRIMARY KEY AUTOINCREMENT, flow_id INTEGER NOT NULL, step_order INTEGER NOT NULL, step_name TEXT, script_id INTEGER NOT NULL, script_version_id INTEGER, timeout_ms INTEGER, failure_strategy TEXT, input_template TEXT, is_enabled BOOLEAN, UNIQUE(flow_id, step_order));`,
+		`CREATE TABLE script_flow_mounts (mount_id INTEGER PRIMARY KEY AUTOINCREMENT, flow_id INTEGER NOT NULL, scope TEXT, event_key TEXT, target_type TEXT, target_id INTEGER, is_enabled BOOLEAN, created_at DATETIME, UNIQUE(scope, event_key, target_type, target_id));`,
 		`CREATE TABLE action_logs (log_id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, resource TEXT, action TEXT, created_at DATETIME, details TEXT);`,
 		`CREATE TABLE global_config (id INTEGER PRIMARY KEY, is_init BOOLEAN, site_name TEXT, email_address TEXT, email_app_password TEXT, email_smtp_server TEXT, email_smtp_port INTEGER);`,
 		`CREATE TABLE author (author_id INTEGER PRIMARY KEY AUTOINCREMENT, author_name TEXT, pen_name TEXT, password TEXT, author_email TEXT, author_infos TEXT);`,
@@ -271,6 +276,143 @@ func TestSystemFunctions(t *testing.T) {
 	}
 	if _, err := getGlobalConfig(); err == nil {
 		t.Fatal("getGlobalConfig should fail when row is missing")
+	}
+}
+
+func TestScriptFlowFunctions(t *testing.T) {
+	db := setupTestDB(t)
+
+	if err := db.Exec(`INSERT INTO admins (admin_name, password) VALUES ('ops', 'pwd')`).Error; err != nil {
+		t.Fatalf("seed admin failed: %v", err)
+	}
+
+	def := &model.ScriptDefinition{
+		ScriptKey:   "submission_guard",
+		ScriptName:  "Submission Guard",
+		Interpreter: "python3",
+		IsEnabled:   true,
+		Meta:        map[string]any{"k": "v"},
+	}
+	if err := CreateScriptDefinition(def); err != nil {
+		t.Fatalf("CreateScriptDefinition failed: %v", err)
+	}
+	if def.ScriptID == 0 {
+		t.Fatal("script id should be assigned")
+	}
+
+	if _, err := GetScriptDefinitionByID(def.ScriptID); err != nil {
+		t.Fatalf("GetScriptDefinitionByID failed: %v", err)
+	}
+	if _, err := GetScriptDefinitionByKey(def.ScriptKey); err != nil {
+		t.Fatalf("GetScriptDefinitionByKey failed: %v", err)
+	}
+
+	if err := UpdateScriptDefinition(def.ScriptID, &model.ScriptDefinition{ScriptName: "Submission Guard V2", Interpreter: "python3"}); err != nil {
+		t.Fatalf("UpdateScriptDefinition failed: %v", err)
+	}
+	if err := SetScriptDefinitionEnabled(def.ScriptID, true); err != nil {
+		t.Fatalf("SetScriptDefinitionEnabled failed: %v", err)
+	}
+
+	nextVersion, err := GetNextScriptVersionNumber(def.ScriptID)
+	if err != nil || nextVersion != 1 {
+		t.Fatalf("GetNextScriptVersionNumber failed: %v next=%d", err, nextVersion)
+	}
+
+	v1 := &model.ScriptVersion{ScriptID: def.ScriptID, VersionNum: 1, FileName: "v1.py", RelativePath: "scripts/submission_guard/v1/v1.py", IsActive: true, CreatedBy: 1}
+	if err = CreateScriptVersion(v1); err != nil {
+		t.Fatalf("CreateScriptVersion v1 failed: %v", err)
+	}
+	v2 := &model.ScriptVersion{ScriptID: def.ScriptID, VersionNum: 2, FileName: "v2.py", RelativePath: "scripts/submission_guard/v2/v2.py", IsActive: false, CreatedBy: 1}
+	if err = CreateScriptVersion(v2); err != nil {
+		t.Fatalf("CreateScriptVersion v2 failed: %v", err)
+	}
+
+	if _, err = GetScriptVersionByID(v1.VersionID); err != nil {
+		t.Fatalf("GetScriptVersionByID failed: %v", err)
+	}
+	versions, err := ListScriptVersions(def.ScriptID)
+	if err != nil || len(versions) != 2 {
+		t.Fatalf("ListScriptVersions failed: %v len=%d", err, len(versions))
+	}
+
+	if err = ActivateScriptVersion(def.ScriptID, v2.VersionID); err != nil {
+		t.Fatalf("ActivateScriptVersion failed: %v", err)
+	}
+	active, err := GetActiveScriptVersion(def.ScriptID)
+	if err != nil {
+		t.Fatalf("GetActiveScriptVersion failed: %v", err)
+	}
+	if active.VersionID != v2.VersionID {
+		t.Fatalf("unexpected active version: %+v", active)
+	}
+
+	flow := &model.ScriptFlow{FlowKey: "submission_pre_chain", FlowName: "Submission Pre Chain", IsEnabled: true, Meta: map[string]any{"x": 1}}
+	if err = CreateScriptFlow(flow); err != nil {
+		t.Fatalf("CreateScriptFlow failed: %v", err)
+	}
+	if flow.FlowID == 0 {
+		t.Fatal("flow id should be assigned")
+	}
+
+	if err = UpdateScriptFlow(flow.FlowID, &model.ScriptFlow{FlowName: "Submission Pre Chain V2"}); err != nil {
+		t.Fatalf("UpdateScriptFlow failed: %v", err)
+	}
+	if _, err = GetScriptFlowByID(flow.FlowID); err != nil {
+		t.Fatalf("GetScriptFlowByID failed: %v", err)
+	}
+	flows, err := ListScriptFlows()
+	if err != nil || len(flows) == 0 {
+		t.Fatalf("ListScriptFlows failed: %v len=%d", err, len(flows))
+	}
+	if err = SetScriptFlowEnabled(flow.FlowID, true); err != nil {
+		t.Fatalf("SetScriptFlowEnabled failed: %v", err)
+	}
+
+	steps := []model.FlowStep{{
+		FlowID:          flow.FlowID,
+		StepOrder:       1,
+		StepName:        "guard",
+		ScriptID:        def.ScriptID,
+		ScriptVersionID: 0,
+		TimeoutMs:       1000,
+		FailureStrategy: "fail_close",
+		InputTemplate:   map[string]any{"mode": "strict"},
+		IsEnabled:       true,
+	}}
+	if err = ReplaceFlowSteps(flow.FlowID, steps); err != nil {
+		t.Fatalf("ReplaceFlowSteps failed: %v", err)
+	}
+	listedSteps, err := ListFlowSteps(flow.FlowID)
+	if err != nil || len(listedSteps) != 1 {
+		t.Fatalf("ListFlowSteps failed: %v len=%d", err, len(listedSteps))
+	}
+
+	mount := &model.FlowMount{FlowID: flow.FlowID, Scope: "submission", EventKey: "file_pre", TargetType: "global", TargetID: 0, IsEnabled: true}
+	if err = CreateFlowMount(mount); err != nil {
+		t.Fatalf("CreateFlowMount failed: %v", err)
+	}
+	mounts, err := ListFlowMountsByFlow(flow.FlowID)
+	if err != nil || len(mounts) != 1 {
+		t.Fatalf("ListFlowMountsByFlow failed: %v len=%d", err, len(mounts))
+	}
+
+	resolvedFlow, resolvedSteps, err := ResolveFlowForExecution("submission", "file_pre", "track", 999)
+	if err != nil {
+		t.Fatalf("ResolveFlowForExecution failed: %v", err)
+	}
+	if resolvedFlow.FlowID != flow.FlowID || len(resolvedSteps) != 1 {
+		t.Fatalf("unexpected resolved data: flow=%+v steps=%d", resolvedFlow, len(resolvedSteps))
+	}
+	if resolvedSteps[0].Version.VersionID != v2.VersionID {
+		t.Fatalf("expected active version v2, got %+v", resolvedSteps[0].Version)
+	}
+
+	if err = DeleteFlowMount(mount.MountID); err != nil {
+		t.Fatalf("DeleteFlowMount failed: %v", err)
+	}
+	if _, _, err = ResolveFlowForExecution("submission", "file_pre", "track", 999); err != ErrFlowNotMounted {
+		t.Fatalf("expected ErrFlowNotMounted, got %v", err)
 	}
 }
 

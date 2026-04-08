@@ -1,18 +1,44 @@
 package submission
 
 import (
+	"main/database/pgsql"
 	"main/database/redis"
 	"main/model"
 	_const "main/util/const"
+	"main/util/document"
 	"main/util/log"
 	"main/util/response"
+	"main/util/scriptflow"
 	"main/util/token"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lvyonghuan/Ubik-Util/uerr"
+)
+
+var (
+	checkRefreshTokenFn = token.CheckRefreshToken
+
+	registerAuthorSrcFn         = registerAuthorSrc
+	authorLoginSrcFn            = authorLoginSrc
+	refreshTokenSrcFn           = refreshTokenSrc
+	updateAuthorSrcFn           = updateAuthorSrc
+	submissionWorkSrcFn         = submissionWorkSrc
+	findSubmissionsByAuthorIDFn = findSubmissionsByAuthorIDSrc
+	updateSubmissionSrcFn       = updateSubmissionSrc
+	deleteSubmissionSrcFn       = deleteSubmissionSrc
+
+	getUploadFilePermissionFn = redis.GetUploadFilePermission
+	runTrackHookFn            = runTrackHook
+	patchWorkInfosFn          = pgsql.PatchWorkInfos
+
+	newDocumentConverterFn = func() document.Converter {
+		return document.NewLibreOfficeConverter("", "", 60*time.Second)
+	}
 )
 
 // @Summary 作者注册
@@ -32,9 +58,10 @@ func authorRegister(c *gin.Context) {
 		return
 	}
 
-	err = registerAuthorSrc(&author)
+	err = registerAuthorSrcFn(&author)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
+		return
 	}
 
 	response.RespSuccess(c, nil)
@@ -57,7 +84,7 @@ func authorLogin(c *gin.Context) {
 		return
 	}
 
-	tokens, err := authorLoginSrc(&author)
+	tokens, err := authorLoginSrcFn(&author)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return
@@ -77,7 +104,7 @@ func authorLogin(c *gin.Context) {
 func refreshToken(c *gin.Context) {
 	bearerToken := c.GetHeader("Authorization")
 
-	id, role, err := token.CheckRefreshToken(bearerToken)
+	id, role, err := checkRefreshTokenFn(bearerToken)
 	if err != nil {
 		response.RespError(c, 401, err.Error())
 		c.Abort()
@@ -90,7 +117,7 @@ func refreshToken(c *gin.Context) {
 		return
 	}
 
-	tokens, err := refreshTokenSrc(id)
+	tokens, err := refreshTokenSrcFn(id)
 	if err != nil {
 		log.Logger.Warn("Author refresh token error: " + err.Error())
 		response.RespError(c, 500, "error: Admin refresh token error")
@@ -123,7 +150,7 @@ func updateAuthor(c *gin.Context) {
 		return
 	}
 
-	err = updateAuthorSrc(&author)
+	err = updateAuthorSrcFn(&author)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return
@@ -141,7 +168,7 @@ func updateAuthor(c *gin.Context) {
 // @Param Authorization header string true "Bearer {access_token}"
 // @Param work body model.Work true "作品信息"
 // @Success 200 {object} model.Response{msg=model.Work} "提交成功，返回提交的作品信息"
-// @Router /submission [post]
+// @Router /author/submission [post]
 func submissionWork(c *gin.Context) {
 	workInt, isExist := c.Get("work")
 	if !isExist {
@@ -154,7 +181,7 @@ func submissionWork(c *gin.Context) {
 		return
 	}
 
-	err := submissionWorkSrc(&work)
+	err := submissionWorkSrcFn(&work)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return
@@ -171,7 +198,7 @@ func submissionWork(c *gin.Context) {
 // @Param Authorization header string true "Bearer {access_token}"
 // @Param id path int true "作者ID"
 // @Success 200 {object} model.Response{msg=[]model.Work} "获取成功，返回提交记录列表"
-// @Router /submission/{id} [get]
+// @Router /author/submission/{id} [get]
 func getSubmissions(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -185,7 +212,7 @@ func getSubmissions(c *gin.Context) {
 		return
 	}
 
-	works, err := findSubmissionsByAuthorIDSrc(id)
+	works, err := findSubmissionsByAuthorIDFn(id)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return
@@ -202,7 +229,7 @@ func getSubmissions(c *gin.Context) {
 // @Param Authorization header string true "Bearer {access_token}"
 // @Param work body model.Work true "新的作品信息"
 // @Success 200 {object} model.Response{msg=model.Work} "更新成功，返回更新后的作品信息"
-// @Router /submission [put]
+// @Router /author/submission [put]
 func updateSubmission(c *gin.Context) {
 	workInt, isExist := c.Get("work")
 	if !isExist {
@@ -218,7 +245,7 @@ func updateSubmission(c *gin.Context) {
 		return
 	}
 
-	err := updateSubmissionSrc(&work)
+	err := updateSubmissionSrcFn(&work)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return
@@ -235,7 +262,7 @@ func updateSubmission(c *gin.Context) {
 // @Param Authorization header string true "Bearer {access_token}"
 // @Param work body model.Work true "作品信息"
 // @Success 200 {object} model.Response{msg=string} "删除成功"
-// @Router /submission [delete]
+// @Router /author/submission [delete]
 func deleteSubmission(c *gin.Context) {
 	workInt, isExist := c.Get("work")
 	if !isExist {
@@ -249,7 +276,7 @@ func deleteSubmission(c *gin.Context) {
 		return
 	}
 
-	err := deleteSubmissionSrc(&work)
+	err := deleteSubmissionSrcFn(&work)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return
@@ -267,17 +294,15 @@ func deleteSubmission(c *gin.Context) {
 // @Param work_id formData int true "作品ID"
 // @Param article_file formData file true "提交文件"
 // @Success 200 {object} model.Response "上传成功"
-// @Router /submission/file [post]
+// @Router /author/submission/file [post]
 func saveSubmissionFile(c *gin.Context) {
-	workID := c.PostForm("work_id")
-
-	//1.校验文档是否已经在数据库提交
-	workIDInt, err := strconv.Atoi(workID)
+	workIDStr := c.PostForm("work_id")
+	workIDInt, err := strconv.Atoi(workIDStr)
 	if err != nil {
 		response.RespError(c, 400, "bad request")
 		return
 	}
-	authorID, trackID, err := redis.GetUploadFilePermission(workIDInt)
+	authorID, trackID, err := getUploadFilePermissionFn(workIDInt)
 	if err != nil {
 		log.Logger.Warn("Author upload file permission error: " + err.Error())
 		response.RespError(c, 500, uerr.ExtractError(err).Error())
@@ -289,28 +314,139 @@ func saveSubmissionFile(c *gin.Context) {
 		response.RespError(c, 400, "bad request")
 		return
 	}
-	suffix := fileOrigin.Filename[strings.LastIndex(fileOrigin.Filename, "."):]
+	suffix := strings.ToLower(filepath.Ext(fileOrigin.Filename))
 
-	//检查后缀名是否是允许的类型
 	switch suffix {
-	case "docx":
-	case "doc":
-	//TODO 转换为docx
+	case ".docx", ".doc":
 	default:
 		response.RespError(c, 400, "bad request: unsupported file type")
 		return
 	}
 
-	dst := _const.FileRootPath + "/" + strconv.Itoa(trackID) + "/" + strconv.Itoa(authorID) + "/" + strconv.Itoa(workIDInt) + suffix
-	if err := os.MkdirAll(_const.FileRootPath+"/"+strconv.Itoa(trackID)+"/"+strconv.Itoa(authorID), os.ModePerm); err != nil {
-		response.RespError(c, 500, err.Error())
-		return
-	}
-	err = c.SaveUploadedFile(fileOrigin, dst)
+	preHookResult, err := runTrackHookFn(
+		scriptflow.ScopeSubmission,
+		scriptflow.EventFilePre,
+		trackID,
+		map[string]any{
+			"phase":      "file_pre",
+			"workID":     workIDInt,
+			"authorID":   authorID,
+			"trackID":    trackID,
+			"fileName":   fileOrigin.Filename,
+			"fileSize":   fileOrigin.Size,
+			"fileSuffix": suffix,
+		},
+	)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return
 	}
+	if !preHookResult.Allowed {
+		reason := preHookResult.Reason
+		if reason == "" {
+			reason = "upload blocked by script flow"
+		}
+		response.RespError(c, 403, reason)
+		return
+	}
+	if len(preHookResult.Patch) > 0 {
+		if err := patchWorkInfosFn(workIDInt, preHookResult.Patch); err != nil {
+			response.RespError(c, 500, err.Error())
+			return
+		}
+	}
+
+	dstDir := filepath.Join(_const.FileRootPath, strconv.Itoa(trackID), strconv.Itoa(authorID))
+	if err := os.MkdirAll(dstDir, os.ModePerm); err != nil {
+		response.RespError(c, 500, err.Error())
+		return
+	}
+
+	if err := cleanupSubmissionFileVariants(dstDir, workIDInt); err != nil {
+		response.RespError(c, 500, err.Error())
+		return
+	}
+
+	finalDocxPath := filepath.Join(dstDir, strconv.Itoa(workIDInt)+".docx")
+	if suffix == ".docx" {
+		err = c.SaveUploadedFile(fileOrigin, finalDocxPath)
+		if err != nil {
+			response.RespError(c, 500, err.Error())
+			return
+		}
+	} else {
+		tempDocPath := filepath.Join(dstDir, strconv.Itoa(workIDInt)+".doc")
+		err = c.SaveUploadedFile(fileOrigin, tempDocPath)
+		if err != nil {
+			response.RespError(c, 500, err.Error())
+			return
+		}
+
+		converter := newDocumentConverterFn()
+		err = converter.ConvertDocToDocx(c.Request.Context(), tempDocPath, finalDocxPath)
+		_ = os.Remove(tempDocPath)
+		if err != nil {
+			response.RespError(c, 500, err.Error())
+			return
+		}
+	}
+
+	postHookResult, err := runTrackHookFn(
+		scriptflow.ScopeSubmission,
+		scriptflow.EventFilePost,
+		trackID,
+		map[string]any{
+			"phase":       "file_post",
+			"workID":      workIDInt,
+			"authorID":    authorID,
+			"trackID":     trackID,
+			"savedPath":   filepath.ToSlash(finalDocxPath),
+			"savedSuffix": ".docx",
+		},
+	)
+	if err != nil {
+		response.RespError(c, 500, err.Error())
+		return
+	}
+	if !postHookResult.Allowed {
+		reason := postHookResult.Reason
+		if reason == "" {
+			reason = "upload blocked by script flow"
+		}
+		response.RespError(c, 403, reason)
+		return
+	}
+	if len(postHookResult.Patch) > 0 {
+		if err := patchWorkInfosFn(workIDInt, postHookResult.Patch); err != nil {
+			response.RespError(c, 500, err.Error())
+			return
+		}
+	}
 
 	response.RespSuccess(c, nil)
+}
+
+func cleanupSubmissionFileVariants(dstDir string, workID int) error {
+	entries, err := os.ReadDir(dstDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	prefix := strconv.Itoa(workID) + "."
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dstDir, entry.Name())); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
