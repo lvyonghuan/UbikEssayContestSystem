@@ -36,3 +36,5 @@ conf.toml
 # OS files
 .DS_Store
 Thumbs.db
+
+./tests_files
