@@ -45,13 +45,13 @@ func TestAuthorLoginSrcAndRefreshTokenSrc(t *testing.T) {
 		t.Fatalf("hash password failed: %v", err)
 	}
 
-	getAuthorByAuthorIDFn = func(author *model.Author) error {
+	getAuthorByAuthorNameFn = func(author *model.Author) error {
 		author.AuthorID = 8
 		author.Password = hash
 		return nil
 	}
 
-	resp, err := authorLoginSrc(&model.Author{AuthorID: 8, Password: "secret"})
+	resp, err := authorLoginSrc(&model.Author{AuthorName: "demo", Password: "secret"})
 	if err != nil {
 		t.Fatalf("authorLoginSrc should succeed: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestAuthorLoginSrcAndRefreshTokenSrc(t *testing.T) {
 		t.Fatalf("expected author role in access token, got %s", claims.Role)
 	}
 
-	_, err = authorLoginSrc(&model.Author{AuthorID: 8, Password: "bad"})
+	_, err = authorLoginSrc(&model.Author{AuthorName: "demo", Password: "bad"})
 	if err == nil {
 		t.Fatal("authorLoginSrc should fail for bad password")
 	}

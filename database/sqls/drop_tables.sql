@@ -3,6 +3,11 @@
 BEGIN;
 DROP TABLE IF EXISTS
     action_logs,
+    script_flow_mounts,
+    script_flow_steps,
+    script_flows,
+    script_versions,
+    script_definitions,
     admin_roles,
     admins,
     role_permissions,

@@ -43,7 +43,6 @@ func TestSwaggerDeclaredAPIsAreReachable(t *testing.T) {
 		"/author/refresh",
 		"/author",
 		"/author/submission",
-		"/author/submission/{id}",
 		"/author/submission/file",
 	}
 	for _, p := range requiredPaths {
@@ -52,7 +51,7 @@ func TestSwaggerDeclaredAPIsAreReachable(t *testing.T) {
 		}
 	}
 
-	replacer := strings.NewReplacer("{id}", "1")
+	replacer := strings.NewReplacer()
 	for path, methods := range doc.Paths {
 		for method := range methods {
 			httpMethod := strings.ToUpper(method)
@@ -63,10 +62,10 @@ func TestSwaggerDeclaredAPIsAreReachable(t *testing.T) {
 			switch {
 			case requestPath == "/api/v1/author/register":
 				auth = ""
-				body = []byte(`{"authorName":"u","password":"p"}`)
+				body = []byte(`{"authorName":"u","password":"p","authorEmail":"u@example.com"}`)
 			case requestPath == "/api/v1/author/login":
 				auth = ""
-				body = []byte(`{"authorID":1,"password":"p"}`)
+				body = []byte(`{"authorName":"u","password":"p"}`)
 			case requestPath == "/api/v1/author/refresh":
 				auth = "Bearer refresh-author"
 			case requestPath == "/api/v1/author":

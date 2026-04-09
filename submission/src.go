@@ -22,18 +22,20 @@ import (
 )
 
 var (
-	getAuthorByAuthorNameFn      = pgsql.GetAuthorByAuthorName
-	createAuthorFn               = pgsql.CreateAuthor
-	getAuthorByAuthorIDFn        = pgsql.GetAuthorByAuthorID
-	updateAuthorFn               = pgsql.UpdateAuthor
-	submissionWorkFn             = pgsql.SubmissionWork
-	updateWorkFn                 = pgsql.UpdateWork
-	deleteWorkFn                 = pgsql.DeleteWork
-	findWorksByAuthorIDFn        = pgsql.GetWorksByAuthorID
-	countWorksByAuthorAndTrackFn = pgsql.CountWorksByAuthorAndTrack
-	setUploadFilePermissionFn    = redis.SetUploadFilePermission
-	getStartAndEndDateFn         = redis.GetStartAndEndDate
-	resolveFlowForExecutionFn    = pgsql.ResolveFlowForExecution
+	getAuthorByAuthorNameFn        = pgsql.GetAuthorByAuthorName
+	createAuthorFn                 = pgsql.CreateAuthor
+	getAuthorByAuthorIDFn          = pgsql.GetAuthorByAuthorID
+	updateAuthorFn                 = pgsql.UpdateAuthor
+	submissionWorkFn               = pgsql.SubmissionWork
+	updateWorkFn                   = pgsql.UpdateWork
+	deleteWorkFn                   = pgsql.DeleteWork
+	findWorksByAuthorIDFn          = pgsql.GetWorksByAuthorID
+	countWorksByAuthorAndTrackFn   = pgsql.CountWorksByAuthorAndTrack
+	countWorksByAuthorAndContestFn = pgsql.CountWorksByAuthorAndContest
+	getTrackByIDFn                 = pgsql.GetTrackByID
+	setUploadFilePermissionFn      = redis.SetUploadFilePermission
+	getStartAndEndDateFn           = redis.GetStartAndEndDate
+	resolveFlowForExecutionFn      = pgsql.ResolveFlowForExecution
 
 	executeScriptChainFn = func(chain scriptflow.ChainConfig, input scriptflow.ExecuteInput) (scriptflow.ChainResult, error) {
 		executor := scriptflow.NewExecutor(".", 5*time.Second, []string{"python3", "python", "bash", "sh", "node"})
@@ -52,6 +54,13 @@ func registerAuthorSrc(author *model.Author) error {
 	err := getAuthorByAuthorNameFn(&tmpAuthor)
 	if err != nil {
 		if errors.Is(err, _const.UsernameNotExist) {
+			hashedPassword, hashErr := password.HashPassword(author.Password)
+			if hashErr != nil {
+				log.Logger.Warn("Register author hash password failed: " + hashErr.Error())
+				return uerr.ExtractError(hashErr)
+			}
+			author.Password = hashedPassword
+
 			err = createAuthorFn(author)
 			if err != nil {
 				log.Logger.Warn("Register author failed: " + err.Error())
@@ -69,8 +78,8 @@ func registerAuthorSrc(author *model.Author) error {
 }
 
 func authorLoginSrc(author *model.Author) (token.ResponseToken, error) {
-	tempAuthor := model.Author{AuthorID: author.AuthorID}
-	err := getAuthorByAuthorIDFn(&tempAuthor)
+	tempAuthor := model.Author{AuthorName: author.AuthorName}
+	err := getAuthorByAuthorNameFn(&tempAuthor)
 	if err != nil {
 		log.Logger.Warn("Author login failed: " + err.Error())
 		return token.ResponseToken{}, uerr.ExtractError(err)
@@ -108,7 +117,17 @@ func submissionWorkSrc(work *model.Work) error {
 		return err
 	}
 
-	count, err := countWorksByAuthorAndTrackFn(work.AuthorID, work.TrackID)
+	track, err := getTrackByIDFn(work.TrackID)
+	if err != nil {
+		log.Logger.Warn("Get track by id failed: " + err.Error())
+		return uerr.ExtractError(err)
+	}
+
+	if track.ContestID <= 0 {
+		return errors.New("track is not bound to a contest")
+	}
+
+	count, err := countWorksByAuthorAndContestFn(work.AuthorID, track.ContestID)
 	if err != nil {
 		log.Logger.Warn("Count submissions failed: " + err.Error())
 		return uerr.ExtractError(err)
@@ -121,6 +140,7 @@ func submissionWorkSrc(work *model.Work) error {
 		map[string]any{
 			"phase":         "create",
 			"authorID":      work.AuthorID,
+			"contestID":     track.ContestID,
 			"trackID":       work.TrackID,
 			"existingCount": count,
 			"work":          toWorkMap(*work),

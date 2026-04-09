@@ -7,6 +7,7 @@ import (
 	"main/conf"
 	"main/database/pgsql"
 	"main/database/redis"
+	"main/submission"
 	"main/system"
 	"main/util/log"
 	"main/util/password"
@@ -65,7 +66,10 @@ func main() {
 	system.SysStart(config.API)
 
 	// 启动管理后台服务
-	admin.InitRouter(config.API) //TODO 使用管道查询启动状态并进行控制
+	go admin.InitRouter(config.API) //TODO 使用管道查询启动状态并进行控制
+
+	//启动投稿后台
+	submission.InitRouter(config.API)
 }
 
 func checkSystemInit() bool {

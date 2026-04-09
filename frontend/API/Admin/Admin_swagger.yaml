@@ -1,5 +1,10 @@
 basePath: /api/v1
 definitions:
+  admin.updateStatusRequest:
+    properties:
+      isEnabled:
+        type: boolean
+    type: object
   model.Admin:
     properties:
       adminEmail:
@@ -8,8 +13,55 @@ definitions:
         type: integer
       adminName:
         type: string
+      isActive:
+        type: boolean
       password:
         type: string
+    type: object
+  model.Author:
+    properties:
+      authorEmail:
+        type: string
+      authorID:
+        type: integer
+      authorInfos:
+        additionalProperties: {}
+        type: object
+      authorName:
+        type: string
+      password:
+        type: string
+      penName:
+        type: string
+    type: object
+  model.BatchCreateSubAdminFailure:
+    properties:
+      email:
+        type: string
+      reason:
+        type: string
+    type: object
+  model.BatchCreateSubAdminsRequest:
+    properties:
+      emails:
+        items:
+          type: string
+        type: array
+      permissionNames:
+        items:
+          type: string
+        type: array
+    type: object
+  model.BatchCreateSubAdminsResponse:
+    properties:
+      created:
+        items:
+          $ref: '#/definitions/model.SubAdminCreateResult'
+        type: array
+      failed:
+        items:
+          $ref: '#/definitions/model.BatchCreateSubAdminFailure'
+        type: array
     type: object
   model.Contest:
     properties:
@@ -28,6 +80,65 @@ definitions:
         description: 比赛开始日期，精确到分
         type: string
     type: object
+  model.CreateSubAdminRequest:
+    properties:
+      adminEmail:
+        type: string
+      adminName:
+        type: string
+      permissionNames:
+        items:
+          type: string
+        type: array
+    type: object
+  model.FlowMount:
+    properties:
+      createdAt:
+        type: string
+      eventKey:
+        type: string
+      flowID:
+        type: integer
+      isEnabled:
+        type: boolean
+      mountID:
+        type: integer
+      scope:
+        type: string
+      targetID:
+        type: integer
+      targetType:
+        type: string
+    type: object
+  model.FlowStep:
+    properties:
+      failureStrategy:
+        type: string
+      flowID:
+        type: integer
+      inputTemplate:
+        additionalProperties: {}
+        type: object
+      isEnabled:
+        type: boolean
+      scriptID:
+        type: integer
+      scriptVersionID:
+        type: integer
+      stepID:
+        type: integer
+      stepName:
+        type: string
+      stepOrder:
+        type: integer
+      timeoutMs:
+        type: integer
+    type: object
+  model.HandoverSuperAdminRequest:
+    properties:
+      newSuperAdminID:
+        type: integer
+    type: object
   model.Response:
     properties:
       code:
@@ -36,6 +147,99 @@ definitions:
         type: integer
       msg:
         description: 信息。可以是NULL，也可以是成功时返回的结构体，也可以是失败时的错误信息
+    type: object
+  model.ScriptDefinition:
+    properties:
+      createdAt:
+        type: string
+      description:
+        type: string
+      interpreter:
+        type: string
+      isEnabled:
+        type: boolean
+      meta:
+        additionalProperties: {}
+        type: object
+      scriptID:
+        type: integer
+      scriptKey:
+        type: string
+      scriptName:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  model.ScriptFlow:
+    properties:
+      createdAt:
+        type: string
+      description:
+        type: string
+      flowID:
+        type: integer
+      flowKey:
+        type: string
+      flowName:
+        type: string
+      isEnabled:
+        type: boolean
+      meta:
+        additionalProperties: {}
+        type: object
+      updatedAt:
+        type: string
+    type: object
+  model.ScriptVersion:
+    properties:
+      checksum:
+        type: string
+      createdAt:
+        type: string
+      createdBy:
+        type: integer
+      fileName:
+        type: string
+      isActive:
+        type: boolean
+      relativePath:
+        type: string
+      scriptID:
+        type: integer
+      versionID:
+        type: integer
+      versionNum:
+        type: integer
+    type: object
+  model.SubAdminCreateResult:
+    properties:
+      adminEmail:
+        type: string
+      adminID:
+        type: integer
+      adminName:
+        type: string
+      emailError:
+        type: string
+      emailSent:
+        type: boolean
+      tempPassword:
+        type: string
+    type: object
+  model.SubAdminInfo:
+    properties:
+      adminEmail:
+        type: string
+      adminID:
+        type: integer
+      adminName:
+        type: string
+      isActive:
+        type: boolean
+      permissionNames:
+        items:
+          type: string
+        type: array
     type: object
   model.Track:
     properties:
@@ -54,6 +258,31 @@ definitions:
         description: 赛道设置，存储为JSON格式
         type: object
     type: object
+  model.UpdateSubAdminPermissionsRequest:
+    properties:
+      permissionNames:
+        items:
+          type: string
+        type: array
+    type: object
+  model.Work:
+    properties:
+      authorID:
+        type: integer
+      authorName:
+        type: string
+      trackID:
+        type: integer
+      trackName:
+        type: string
+      workID:
+        type: integer
+      workInfos:
+        additionalProperties: {}
+        type: object
+      workTitle:
+        type: string
+    type: object
   token.ResponseToken:
     properties:
       access_token:
@@ -68,6 +297,138 @@ info:
   title: 管理后台 API
   version: "1.0"
 paths:
+  /admin/authors:
+    get:
+      consumes:
+      - application/json
+      description: 管理员按可选作者名查询作者列表
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作者名，可选
+        in: query
+        name: author_name
+        type: string
+      - description: 偏移量，默认0
+        in: query
+        name: offset
+        type: integer
+      - description: 返回条数，默认20，最大100
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  items:
+                    $ref: '#/definitions/model.Author'
+                  type: array
+              type: object
+      summary: 获取作者列表
+      tags:
+      - Admin
+  /admin/authors/{author_id}:
+    delete:
+      consumes:
+      - application/json
+      description: 管理员删除指定ID的作者
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作者ID
+        in: path
+        name: author_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 删除作者
+      tags:
+      - Admin
+    get:
+      consumes:
+      - application/json
+      description: 管理员根据作者ID获取作者详细信息
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作者ID
+        in: path
+        name: author_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.Author'
+              type: object
+      summary: 获取作者详情
+      tags:
+      - Admin
+    put:
+      consumes:
+      - application/json
+      description: 管理员更新指定ID的作者信息
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作者ID
+        in: path
+        name: author_id
+        required: true
+        type: integer
+      - description: 更新后的作者信息
+        in: body
+        name: author
+        required: true
+        schema:
+          $ref: '#/definitions/model.Author'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.Author'
+              type: object
+      summary: 更新作者
+      tags:
+      - Admin
   /admin/contest:
     post:
       consumes:
@@ -215,6 +576,781 @@ paths:
       summary: 刷新管理员JWT Token
       tags:
       - Admin
+  /admin/script-flows:
+    get:
+      consumes:
+      - application/json
+      description: 管理员获取脚本流程列表
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  items:
+                    $ref: '#/definitions/model.ScriptFlow'
+                  type: array
+              type: object
+      summary: 获取脚本流程列表
+      tags:
+      - Admin
+    post:
+      consumes:
+      - application/json
+      description: 管理员创建脚本流程
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 脚本流程
+        in: body
+        name: req
+        required: true
+        schema:
+          $ref: '#/definitions/model.ScriptFlow'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 创建成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.ScriptFlow'
+              type: object
+      summary: 创建脚本流程
+      tags:
+      - Admin
+  /admin/script-flows/{flow_id}:
+    get:
+      consumes:
+      - application/json
+      description: 管理员根据流程ID获取脚本流程
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 流程ID
+        in: path
+        name: flow_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.ScriptFlow'
+              type: object
+      summary: 获取脚本流程详情
+      tags:
+      - Admin
+    put:
+      consumes:
+      - application/json
+      description: 管理员更新指定脚本流程
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 流程ID
+        in: path
+        name: flow_id
+        required: true
+        type: integer
+      - description: 更新后的流程
+        in: body
+        name: req
+        required: true
+        schema:
+          $ref: '#/definitions/model.ScriptFlow'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.ScriptFlow'
+              type: object
+      summary: 更新脚本流程
+      tags:
+      - Admin
+  /admin/script-flows/{flow_id}/mounts:
+    get:
+      consumes:
+      - application/json
+      description: 管理员获取指定流程的挂载列表
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 流程ID
+        in: path
+        name: flow_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  items:
+                    $ref: '#/definitions/model.FlowMount'
+                  type: array
+              type: object
+      summary: 获取流程挂载列表
+      tags:
+      - Admin
+  /admin/script-flows/{flow_id}/status:
+    post:
+      consumes:
+      - application/json
+      description: 管理员更新指定流程的启用状态
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 流程ID
+        in: path
+        name: flow_id
+        required: true
+        type: integer
+      - description: 状态请求
+        in: body
+        name: req
+        required: true
+        schema:
+          $ref: '#/definitions/admin.updateStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 更新流程启用状态
+      tags:
+      - Admin
+  /admin/script-flows/{flow_id}/steps:
+    get:
+      consumes:
+      - application/json
+      description: 管理员获取指定流程步骤
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 流程ID
+        in: path
+        name: flow_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  items:
+                    $ref: '#/definitions/model.FlowStep'
+                  type: array
+              type: object
+      summary: 获取流程步骤列表
+      tags:
+      - Admin
+    put:
+      consumes:
+      - application/json
+      description: 管理员替换指定流程的全部步骤
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 流程ID
+        in: path
+        name: flow_id
+        required: true
+        type: integer
+      - description: 步骤列表
+        in: body
+        name: req
+        required: true
+        schema:
+          items:
+            $ref: '#/definitions/model.FlowStep'
+          type: array
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 替换流程步骤
+      tags:
+      - Admin
+  /admin/script-flows/mounts:
+    post:
+      consumes:
+      - application/json
+      description: 管理员创建流程挂载
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 挂载信息
+        in: body
+        name: req
+        required: true
+        schema:
+          $ref: '#/definitions/model.FlowMount'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 创建成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.FlowMount'
+              type: object
+      summary: 创建流程挂载
+      tags:
+      - Admin
+  /admin/script-flows/mounts/{mount_id}:
+    delete:
+      consumes:
+      - application/json
+      description: 管理员删除指定流程挂载
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 挂载ID
+        in: path
+        name: mount_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 删除流程挂载
+      tags:
+      - Admin
+  /admin/scripts:
+    get:
+      consumes:
+      - application/json
+      description: 管理员获取脚本定义列表
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  items:
+                    $ref: '#/definitions/model.ScriptDefinition'
+                  type: array
+              type: object
+      summary: 获取脚本定义列表
+      tags:
+      - Admin
+    post:
+      consumes:
+      - application/json
+      description: 管理员创建脚本定义
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 脚本定义
+        in: body
+        name: req
+        required: true
+        schema:
+          $ref: '#/definitions/model.ScriptDefinition'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 创建成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.ScriptDefinition'
+              type: object
+      summary: 创建脚本定义
+      tags:
+      - Admin
+  /admin/scripts/{script_id}:
+    get:
+      consumes:
+      - application/json
+      description: 管理员根据脚本ID获取脚本定义
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 脚本ID
+        in: path
+        name: script_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.ScriptDefinition'
+              type: object
+      summary: 获取脚本定义详情
+      tags:
+      - Admin
+    put:
+      consumes:
+      - application/json
+      description: 管理员更新指定脚本定义
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 脚本ID
+        in: path
+        name: script_id
+        required: true
+        type: integer
+      - description: 更新后的脚本定义
+        in: body
+        name: req
+        required: true
+        schema:
+          $ref: '#/definitions/model.ScriptDefinition'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.ScriptDefinition'
+              type: object
+      summary: 更新脚本定义
+      tags:
+      - Admin
+  /admin/scripts/{script_id}/status:
+    post:
+      consumes:
+      - application/json
+      description: 管理员更新指定脚本的启用状态
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 脚本ID
+        in: path
+        name: script_id
+        required: true
+        type: integer
+      - description: 状态请求
+        in: body
+        name: req
+        required: true
+        schema:
+          $ref: '#/definitions/admin.updateStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 更新脚本启用状态
+      tags:
+      - Admin
+  /admin/scripts/{script_id}/versions:
+    get:
+      consumes:
+      - application/json
+      description: 管理员获取指定脚本的版本列表
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 脚本ID
+        in: path
+        name: script_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  items:
+                    $ref: '#/definitions/model.ScriptVersion'
+                  type: array
+              type: object
+      summary: 获取脚本版本列表
+      tags:
+      - Admin
+  /admin/scripts/{script_id}/versions/{version_id}/activate:
+    post:
+      consumes:
+      - application/json
+      description: 管理员激活指定脚本版本
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 脚本ID
+        in: path
+        name: script_id
+        required: true
+        type: integer
+      - description: 版本ID
+        in: path
+        name: version_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 激活成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 激活脚本版本
+      tags:
+      - Admin
+  /admin/scripts/{script_id}/versions/upload:
+    post:
+      consumes:
+      - multipart/form-data
+      description: 管理员上传脚本文件并创建新版本
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 脚本ID
+        in: path
+        name: script_id
+        required: true
+        type: integer
+      - description: 脚本文件
+        in: formData
+        name: script_file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 上传成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.ScriptVersion'
+              type: object
+      summary: 上传脚本版本
+      tags:
+      - Admin
+  /admin/sub-admins:
+    get:
+      consumes:
+      - application/json
+      description: 仅超级管理员可获取全部子管理员及其权限
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  items:
+                    $ref: '#/definitions/model.SubAdminInfo'
+                  type: array
+              type: object
+      summary: 获取子管理员列表
+      tags:
+      - Admin
+    post:
+      consumes:
+      - application/json
+      description: 仅超级管理员可创建子管理员并分配权限，返回临时密码并尝试发送邮件
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 创建子管理员请求
+        in: body
+        name: req
+        required: true
+        schema:
+          $ref: '#/definitions/model.CreateSubAdminRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 创建成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.SubAdminCreateResult'
+              type: object
+      summary: 创建子管理员
+      tags:
+      - Admin
+  /admin/sub-admins/{admin_id}:
+    delete:
+      consumes:
+      - application/json
+      description: 仅超级管理员可删除子管理员账户
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 子管理员ID
+        in: path
+        name: admin_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 删除子管理员
+      tags:
+      - Admin
+  /admin/sub-admins/{admin_id}/disable:
+    post:
+      consumes:
+      - application/json
+      description: 仅超级管理员可禁用子管理员账户
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 子管理员ID
+        in: path
+        name: admin_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 禁用成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 禁用子管理员
+      tags:
+      - Admin
+  /admin/sub-admins/{admin_id}/permissions:
+    put:
+      consumes:
+      - application/json
+      description: 仅超级管理员可替换子管理员的权限集合
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 子管理员ID
+        in: path
+        name: admin_id
+        required: true
+        type: integer
+      - description: 权限更新请求
+        in: body
+        name: req
+        required: true
+        schema:
+          $ref: '#/definitions/model.UpdateSubAdminPermissionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 更新子管理员权限
+      tags:
+      - Admin
+  /admin/sub-admins/batch:
+    post:
+      consumes:
+      - application/json
+      - text/csv
+      description: 支持 JSON({emails:[...]}) 或 text/csv(首列邮箱) 的批量导入，返回每条创建结果与失败原因
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: JSON批量创建请求
+        in: body
+        name: req
+        schema:
+          $ref: '#/definitions/model.BatchCreateSubAdminsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 创建完成
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.BatchCreateSubAdminsResponse'
+              type: object
+      summary: 批量创建子管理员
+      tags:
+      - Admin
+  /admin/sub-admins/handover-super:
+    post:
+      consumes:
+      - application/json
+      description: 将超级管理员权限交接给目标管理员，并禁用当前超级管理员
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 交接请求
+        in: body
+        name: req
+        required: true
+        schema:
+          $ref: '#/definitions/model.HandoverSuperAdminRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 交接成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 超级管理员交接
+      tags:
+      - Admin
   /admin/track:
     post:
       consumes:
@@ -307,6 +1443,136 @@ paths:
                   $ref: '#/definitions/model.Track'
               type: object
       summary: 更新赛道
+      tags:
+      - Admin
+  /admin/works:
+    get:
+      consumes:
+      - application/json
+      description: 管理员按可选条件查询作品；不传某个参数表示不按该条件过滤
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 赛道ID，可选
+        in: query
+        name: track_id
+        type: integer
+      - description: 作品名，可选
+        in: query
+        name: work_title
+        type: string
+      - description: 作者名，可选
+        in: query
+        name: author_name
+        type: string
+      - description: 偏移量，默认0
+        in: query
+        name: offset
+        type: integer
+      - description: 返回条数，默认20，最大100
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  items:
+                    $ref: '#/definitions/model.Work'
+                  type: array
+              type: object
+      summary: 统一查询作品列表
+      tags:
+      - Admin
+  /admin/works/{work_id}:
+    delete:
+      consumes:
+      - application/json
+      description: 管理员根据作品ID删除作品及其存储文件
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作品ID
+        in: path
+        name: work_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 删除作品
+      tags:
+      - Admin
+    get:
+      consumes:
+      - application/json
+      description: 管理员根据作品ID获取作品详细信息
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作品ID
+        in: path
+        name: work_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                msg:
+                  $ref: '#/definitions/model.Work'
+              type: object
+      summary: 获取作品详情
+      tags:
+      - Admin
+  /admin/works/{work_id}/file:
+    get:
+      consumes:
+      - application/json
+      description: 管理员根据作品ID获取作品文件
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 作品ID
+        in: path
+        name: work_id
+        required: true
+        type: integer
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: 作品文件
+          schema:
+            type: file
+      summary: 获取作品文件
       tags:
       - Admin
 swagger: "2.0"

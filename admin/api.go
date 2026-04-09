@@ -11,6 +11,7 @@ import (
 	"main/util/token"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -32,12 +33,26 @@ var (
 	createTrackSrcFn   = createTrackSrc
 	updateTrackSrcFn   = updateTrackSrc
 	deleteTrackSrcFn   = deleteTrackSrc
+	listAuthorsSrcFn   = listAuthorsSrc
+	getAuthorByIDSrcFn = getAuthorByIDSrc
+	updateAuthorSrcFn  = updateAuthorSrc
+	deleteAuthorSrcFn  = deleteAuthorSrc
 
-	getWorkByIDSrcFn        = getWorkByIDSrc
-	getWorkFilePathSrcFn    = getWorkFilePathSrc
-	getWorksByTrackIDSrcFn  = getWorksByTrackIDSrc
-	getWorksByAuthorIDSrcFn = getWorksByAuthorIDSrc
-	deleteWorkSrcFn         = deleteWorkSrc
+	getWorkByIDSrcFn     = getWorkByIDSrc
+	getWorkFilePathSrcFn = getWorkFilePathSrc
+	queryWorksSrcFn      = queryWorksSrc
+	deleteWorkSrcFn      = deleteWorkSrc
+
+	checkAdminActiveSrcFn       = checkAdminActiveSrc
+	hasPermissionSrcFn          = hasPermissionSrc
+	isSuperAdminSrcFn           = isSuperAdminSrc
+	createSubAdminSrcFn         = createSubAdminSrc
+	batchCreateSubAdminsSrcFn   = batchCreateSubAdminsSrc
+	listSubAdminsSrcFn          = listSubAdminsSrc
+	updateSubAdminPermissionsFn = updateSubAdminPermissionsSrc
+	disableSubAdminSrcFn        = disableSubAdminSrc
+	deleteSubAdminSrcFn         = deleteSubAdminSrc
+	handoverSuperAdminSrcFn     = handoverSuperAdminSrc
 )
 
 // InitRouter 初始化管理后台路由
@@ -47,8 +62,12 @@ var (
 // @host            localhost:8081
 // @BasePath        /api/v1
 func InitRouter(conf conf.APIConfig) {
-	r := buildAdminRouter()
+	r := BuildAdminRouter()
 	_ = runServerFn(r, conf.AdminPort)
+}
+
+func BuildAdminRouter() *gin.Engine {
+	return buildAdminRouter()
 }
 
 func buildAdminRouter() *gin.Engine {
@@ -57,48 +76,211 @@ func buildAdminRouter() *gin.Engine {
 	// 挂载swagger路由
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler, ginSwagger.InstanceName("Admin")))
 
-	//设置路由项
+	// 设置路由项
 	v1 := r.Group("/api/v1")
 	{
 		admin := v1.Group("/admin")
 		{
-			admin.POST("/login", login)          //admin账号只能由超级管理员衍生，不能注册
-			admin.POST("/refresh", refreshToken) //刷新token
+			admin.POST("/login", login)
+			admin.POST("/refresh", refreshToken)
 
 			contests := admin.Group("/contest", checkAccessToken)
 			{
-				contests.POST("", createContest) //创建征文活动
+				contests.POST("", requirePermission(_const.PermContestCreate), createContest)
 				contest := contests.Group("/:contest_id")
 				{
-					contest.PUT("", updateContest)    //更新征文活动
-					contest.DELETE("", deleteContest) //删除征文活动
+					contest.PUT("", requirePermission(_const.PermContestUpdate), updateContest)
+					contest.DELETE("", requirePermission(_const.PermContestDelete), deleteContest)
 				}
 			}
 
 			tracks := admin.Group("/track", checkAccessToken)
 			{
-				tracks.POST("", createTrack) //创建赛道
+				tracks.POST("", requirePermission(_const.PermTrackCreate), createTrack)
 				track := tracks.Group("/:track_id")
 				{
-					track.PUT("", updateTrack)    //更新赛道
-					track.DELETE("", deleteTrack) //删除赛道
+					track.PUT("", requirePermission(_const.PermTrackUpdate), updateTrack)
+					track.DELETE("", requirePermission(_const.PermTrackDelete), deleteTrack)
+				}
+			}
+
+			authors := admin.Group("/authors", checkAccessToken)
+			{
+				authors.GET("", requirePermission(_const.PermAuthorRead), listAuthors)
+				author := authors.Group("/:author_id")
+				{
+					author.GET("", requirePermission(_const.PermAuthorRead), getAuthorByID)
+					author.PUT("", requirePermission(_const.PermAuthorUpdate), updateAuthor)
+					author.DELETE("", requirePermission(_const.PermAuthorDelete), deleteAuthor)
 				}
 			}
 
 			works := admin.Group("/works", checkAccessToken)
 			{
-				works.GET("/:work_id", getWorkByID)                 //获取作品详细信息
-				works.GET("/:work_id/file", getWorkFile)            //获取作品文件，按照./submissions/{track_id}/{author_id}/{work_id}.suffix的形式存储
-				works.GET("/track/:track_id", getWorksByTrackID)    //获取指定赛道的所有作品
-				works.GET("/author/:author_id", getWorksByAuthorID) //获取指定作者的所有作品
-				works.DELETE("/:work_id", deleteWork)               //删除指定作品（同时要删除存储）
+				works.GET("", requirePermission(_const.PermWorksRead), getWorks)
+				works.GET("/:work_id", requirePermission(_const.PermWorksRead), getWorkByID)
+				works.GET("/:work_id/file", requirePermission(_const.PermWorksRead), getWorkFile)
+				works.DELETE("/:work_id", requirePermission(_const.PermWorksDelete), deleteWork)
 			}
 
 			registerScriptRoutes(admin)
+
+			subAdmins := admin.Group("/sub-admins", checkAccessToken, requireSuperAdmin())
+			{
+				subAdmins.GET("", listSubAdmins)
+				subAdmins.POST("", createSubAdmin)
+				subAdmins.POST("/batch", batchCreateSubAdmins)
+				subAdmin := subAdmins.Group("/:admin_id")
+				{
+					subAdmin.PUT("/permissions", updateSubAdminPermissions)
+					subAdmin.POST("/disable", disableSubAdmin)
+					subAdmin.DELETE("", deleteSubAdmin)
+				}
+				subAdmins.POST("/handover-super", handoverSuperAdmin)
+			}
 		}
 	}
 
 	return r
+}
+
+// @Summary 获取作者列表
+// @Description 管理员按可选作者名查询作者列表
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param author_name query string false "作者名，可选"
+// @Param offset query int false "偏移量，默认0"
+// @Param limit query int false "返回条数，默认20，最大100"
+// @Success 200 {object} model.Response{msg=[]model.Author} "获取成功"
+// @Router /admin/authors [get]
+func listAuthors(c *gin.Context) {
+	authorName := strings.TrimSpace(c.Query("author_name"))
+
+	offset := 0
+	if offsetStr := strings.TrimSpace(c.DefaultQuery("offset", "0")); offsetStr != "" {
+		parsedOffset, err := strconv.Atoi(offsetStr)
+		if err != nil || parsedOffset < 0 {
+			response.RespError(c, 400, "error: Invalid offset")
+			return
+		}
+		offset = parsedOffset
+	}
+
+	limit := 20
+	if limitStr := strings.TrimSpace(c.DefaultQuery("limit", "20")); limitStr != "" {
+		parsedLimit, err := strconv.Atoi(limitStr)
+		if err != nil || parsedLimit <= 0 || parsedLimit > 100 {
+			response.RespError(c, 400, "error: Invalid limit")
+			return
+		}
+		limit = parsedLimit
+	}
+
+	authors, err := listAuthorsSrcFn(authorName, offset, limit)
+	if err != nil {
+		response.RespError(c, 500, "error: List authors error")
+		return
+	}
+
+	response.RespSuccess(c, authors)
+}
+
+// @Summary 获取作者详情
+// @Description 管理员根据作者ID获取作者详细信息
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param author_id path int true "作者ID"
+// @Success 200 {object} model.Response{msg=model.Author} "获取成功"
+// @Router /admin/authors/{author_id} [get]
+func getAuthorByID(c *gin.Context) {
+	authorID, err := strconv.Atoi(c.Param("author_id"))
+	if err != nil || authorID <= 0 {
+		response.RespError(c, 400, "error: Invalid author_id")
+		return
+	}
+
+	author, err := getAuthorByIDSrcFn(authorID)
+	if err != nil {
+		if errors.Is(err, errAuthorNotFound) {
+			response.RespError(c, 404, err.Error())
+			return
+		}
+		response.RespError(c, 500, "error: Get author error")
+		return
+	}
+
+	response.RespSuccess(c, author)
+}
+
+// @Summary 更新作者
+// @Description 管理员更新指定ID的作者信息
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param author_id path int true "作者ID"
+// @Param author body model.Author true "更新后的作者信息"
+// @Success 200 {object} model.Response{msg=model.Author} "更新成功"
+// @Router /admin/authors/{author_id} [put]
+func updateAuthor(c *gin.Context) {
+	authorID, err := strconv.Atoi(c.Param("author_id"))
+	if err != nil || authorID <= 0 {
+		response.RespError(c, 400, "error: Invalid author_id")
+		return
+	}
+
+	var author model.Author
+	err = c.BindJSON(&author)
+	if err != nil {
+		log.Logger.Warn("Update author bind json error: " + err.Error())
+		response.RespError(c, 500, "error: Update author bind json error")
+		return
+	}
+
+	updated, err := updateAuthorSrcFn(c.GetInt("admin_token_id"), authorID, &author)
+	if err != nil {
+		if errors.Is(err, errAuthorNotFound) {
+			response.RespError(c, 404, err.Error())
+			return
+		}
+		response.RespError(c, 500, "error: Update author error")
+		return
+	}
+
+	response.RespSuccess(c, updated)
+}
+
+// @Summary 删除作者
+// @Description 管理员删除指定ID的作者
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param author_id path int true "作者ID"
+// @Success 200 {object} model.Response{} "删除成功"
+// @Router /admin/authors/{author_id} [delete]
+func deleteAuthor(c *gin.Context) {
+	authorID, err := strconv.Atoi(c.Param("author_id"))
+	if err != nil || authorID <= 0 {
+		response.RespError(c, 400, "error: Invalid author_id")
+		return
+	}
+
+	err = deleteAuthorSrcFn(c.GetInt("admin_token_id"), authorID)
+	if err != nil {
+		if errors.Is(err, errAuthorNotFound) {
+			response.RespError(c, 404, err.Error())
+			return
+		}
+		response.RespError(c, 500, "error: Delete author error")
+		return
+	}
+
+	response.RespSuccess(c, nil)
 }
 
 // 中间件  ------------------------------------------
@@ -119,8 +301,114 @@ func checkAccessToken(c *gin.Context) {
 		return
 	}
 
+	isActive, err := checkAdminActiveSrcFn(int(id))
+	if err != nil {
+		response.RespError(c, 500, "error: check admin active status failed")
+		c.Abort()
+		return
+	}
+	if !isActive {
+		response.RespError(c, 403, "forbidden: admin account is disabled")
+		c.Abort()
+		return
+	}
+
 	c.Set("admin_token_id", int(id))
 	c.Next()
+}
+
+func requirePermission(permissionName string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		adminID := c.GetInt("admin_token_id")
+		hasPermission, err := hasPermissionSrcFn(adminID, permissionName)
+		if err != nil {
+			response.RespError(c, 500, "error: permission check failed")
+			c.Abort()
+			return
+		}
+		if !hasPermission {
+			response.RespError(c, 403, "forbidden: insufficient permissions")
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+func requireSuperAdmin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		adminID := c.GetInt("admin_token_id")
+		isSuper, err := isSuperAdminSrcFn(adminID)
+		if err != nil {
+			response.RespError(c, 500, "error: super admin check failed")
+			c.Abort()
+			return
+		}
+		if !isSuper {
+			response.RespError(c, 403, "forbidden: super admin required")
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// @Summary 统一查询作品列表
+// @Description 管理员按可选条件查询作品；不传某个参数表示不按该条件过滤
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param track_id query int false "赛道ID，可选"
+// @Param work_title query string false "作品名，可选"
+// @Param author_name query string false "作者名，可选"
+// @Param offset query int false "偏移量，默认0"
+// @Param limit query int false "返回条数，默认20，最大100"
+// @Success 200 {object} model.Response{msg=[]model.Work} "获取成功"
+// @Router /admin/works [get]
+func getWorks(c *gin.Context) {
+	var trackIDPtr *int
+	if trackIDStr := strings.TrimSpace(c.Query("track_id")); trackIDStr != "" {
+		trackID, err := strconv.Atoi(trackIDStr)
+		if err != nil || trackID <= 0 {
+			response.RespError(c, 400, "error: Invalid track_id")
+			return
+		}
+		trackIDPtr = &trackID
+	}
+
+	workTitle := strings.TrimSpace(c.Query("work_title"))
+	authorName := strings.TrimSpace(c.Query("author_name"))
+
+	offset := 0
+	if offsetStr := strings.TrimSpace(c.DefaultQuery("offset", "0")); offsetStr != "" {
+		parsedOffset, err := strconv.Atoi(offsetStr)
+		if err != nil || parsedOffset < 0 {
+			response.RespError(c, 400, "error: Invalid offset")
+			return
+		}
+		offset = parsedOffset
+	}
+
+	limit := 20
+	if limitStr := strings.TrimSpace(c.DefaultQuery("limit", "20")); limitStr != "" {
+		parsedLimit, err := strconv.Atoi(limitStr)
+		if err != nil || parsedLimit <= 0 || parsedLimit > 100 {
+			response.RespError(c, 400, "error: Invalid limit")
+			return
+		}
+		limit = parsedLimit
+	}
+
+	works, err := queryWorksSrcFn(trackIDPtr, workTitle, authorName, offset, limit)
+	if err != nil {
+		response.RespError(c, 500, "error: Query works error")
+		return
+	}
+
+	response.RespSuccess(c, works)
 }
 
 //API handler ------------------------------------------
@@ -174,6 +462,18 @@ func refreshToken(c *gin.Context) {
 
 	if role != _const.RoleAdmin {
 		response.RespError(c, 403, "forbidden: insufficient permissions")
+		c.Abort()
+		return
+	}
+
+	isActive, activeErr := checkAdminActiveSrcFn(int(id))
+	if activeErr != nil {
+		response.RespError(c, 500, "error: check admin active status failed")
+		c.Abort()
+		return
+	}
+	if !isActive {
+		response.RespError(c, 403, "forbidden: admin account is disabled")
 		c.Abort()
 		return
 	}
@@ -435,56 +735,6 @@ func getWorkFile(c *gin.Context) {
 	}
 
 	c.FileAttachment(filePath, filepath.Base(filePath))
-}
-
-// @Summary 按赛道获取作品列表
-// @Description 管理员根据赛道ID获取该赛道下的全部作品
-// @Tags Admin
-// @Accept application/json
-// @Produce application/json
-// @Param Authorization header string true "Bearer {access_token}"
-// @Param track_id path int true "赛道ID"
-// @Success 200 {object} model.Response{msg=[]model.Work} "获取成功"
-// @Router /admin/works/track/{track_id} [get]
-func getWorksByTrackID(c *gin.Context) {
-	trackID, err := strconv.Atoi(c.Param("track_id"))
-	if err != nil {
-		response.RespError(c, 400, "error: Invalid track_id")
-		return
-	}
-
-	works, err := getWorksByTrackIDSrcFn(trackID)
-	if err != nil {
-		response.RespError(c, 500, "error: Get works by track_id error")
-		return
-	}
-
-	response.RespSuccess(c, works)
-}
-
-// @Summary 按作者获取作品列表
-// @Description 管理员根据作者ID获取该作者的全部作品
-// @Tags Admin
-// @Accept application/json
-// @Produce application/json
-// @Param Authorization header string true "Bearer {access_token}"
-// @Param author_id path int true "作者ID"
-// @Success 200 {object} model.Response{msg=[]model.Work} "获取成功"
-// @Router /admin/works/author/{author_id} [get]
-func getWorksByAuthorID(c *gin.Context) {
-	authorID, err := strconv.Atoi(c.Param("author_id"))
-	if err != nil {
-		response.RespError(c, 400, "error: Invalid author_id")
-		return
-	}
-
-	works, err := getWorksByAuthorIDSrcFn(authorID)
-	if err != nil {
-		response.RespError(c, 500, "error: Get works by author_id error")
-		return
-	}
-
-	response.RespSuccess(c, works)
 }
 
 // @Summary 删除作品

@@ -13,15 +13,27 @@ async function login(page: Page) {
 
 test('login and reach dashboard', async ({ page }) => {
   await login(page)
-  await expect(page.getByText('运营看板')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '比赛看板' })).toBeVisible()
 })
 
-test('navigate to contests and tracks', async ({ page }) => {
+test('navigate to major admin modules', async ({ page }) => {
   await login(page)
 
-  await page.getByRole('menuitem', { name: '赛事管理' }).click()
+  await page.getByRole('menuitem', { name: '作者管理' }).click()
+  await expect(page.getByRole('heading', { name: '作者管理' })).toBeVisible()
+
+  await page.getByRole('menuitem', { name: '子管理员' }).click()
+  await expect(page.getByRole('heading', { name: '子管理员管理' })).toBeVisible()
+
+  await page.getByRole('menuitem', { name: '比赛看板' }).click()
+  await expect(page.getByRole('heading', { name: '比赛看板' })).toBeVisible()
+
+  await page.getByRole('button', { name: '比赛配置入口' }).click()
   await expect(page.getByRole('heading', { name: '赛事管理' })).toBeVisible()
 
-  await page.getByRole('menuitem', { name: '赛道管理' }).click()
-  await expect(page.getByRole('heading', { name: '赛道管理' })).toBeVisible()
+  await page.getByRole('button', { name: '详情' }).first().click()
+  await expect(page.getByRole('heading', { name: '比赛详情' })).toBeVisible()
+
+  await page.getByRole('menuitem', { name: '全局配置' }).click()
+  await expect(page.getByRole('heading', { name: '全局配置' })).toBeVisible()
 })

@@ -68,7 +68,9 @@ function openEditDialog(track: Track) {
 async function saveTrack() {
   let parsedSettings: Record<string, unknown> = {}
   try {
-    parsedSettings = JSON.parse(form.trackSettingsText)
+    parsedSettings = form.trackSettingsText.trim()
+      ? (JSON.parse(form.trackSettingsText) as Record<string, unknown>)
+      : {}
   } catch {
     ElMessage.error('赛道设置必须是合法 JSON')
     return
@@ -163,7 +165,7 @@ onMounted(async () => {
         <el-form-item label="赛道描述">
           <el-input v-model="form.trackDescription" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item label="赛道设置(JSON)">
+        <el-form-item label="赛道设置(JSON，可选)">
           <el-input v-model="form.trackSettingsText" type="textarea" :rows="8" />
         </el-form-item>
       </el-form>

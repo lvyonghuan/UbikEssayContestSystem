@@ -13,6 +13,28 @@ type updateStatusRequest struct {
 	IsEnabled bool `json:"isEnabled"`
 }
 
+var (
+	createScriptDefinitionSrcFn     = createScriptDefinitionSrc
+	listScriptDefinitionsSrcFn      = listScriptDefinitionsSrc
+	getScriptDefinitionByIDSrcFn    = getScriptDefinitionByIDSrc
+	updateScriptDefinitionSrcFn     = updateScriptDefinitionSrc
+	setScriptDefinitionEnabledSrcFn = setScriptDefinitionEnabledSrc
+	uploadScriptVersionSrcFn        = uploadScriptVersionSrc
+	listScriptVersionsSrcFn         = listScriptVersionsSrc
+	activateScriptVersionSrcFn      = activateScriptVersionSrc
+
+	createScriptFlowSrcFn     = createScriptFlowSrc
+	listScriptFlowsSrcFn      = listScriptFlowsSrc
+	getScriptFlowByIDSrcFn    = getScriptFlowByIDSrc
+	updateScriptFlowSrcFn     = updateScriptFlowSrc
+	setScriptFlowEnabledSrcFn = setScriptFlowEnabledSrc
+	replaceFlowStepsSrcFn     = replaceFlowStepsSrc
+	listFlowStepsSrcFn        = listFlowStepsSrc
+	createFlowMountSrcFn      = createFlowMountSrc
+	deleteFlowMountSrcFn      = deleteFlowMountSrc
+	listFlowMountsByFlowSrcFn = listFlowMountsByFlowSrc
+)
+
 func registerScriptRoutes(admin *gin.RouterGroup) {
 	scripts := admin.Group("/scripts", checkAccessToken)
 	{
@@ -41,6 +63,15 @@ func registerScriptRoutes(admin *gin.RouterGroup) {
 	}
 }
 
+// @Summary 创建脚本定义
+// @Description 管理员创建脚本定义
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param req body model.ScriptDefinition true "脚本定义"
+// @Success 200 {object} model.Response{msg=model.ScriptDefinition} "创建成功"
+// @Router /admin/scripts [post]
 func createScriptDefinition(c *gin.Context) {
 	adminID := c.GetInt("admin_token_id")
 	var req model.ScriptDefinition
@@ -49,7 +80,7 @@ func createScriptDefinition(c *gin.Context) {
 		return
 	}
 
-	if err := createScriptDefinitionSrc(adminID, &req); err != nil {
+	if err := createScriptDefinitionSrcFn(adminID, &req); err != nil {
 		response.RespError(c, 500, err.Error())
 		return
 	}
@@ -57,8 +88,16 @@ func createScriptDefinition(c *gin.Context) {
 	response.RespSuccess(c, req)
 }
 
+// @Summary 获取脚本定义列表
+// @Description 管理员获取脚本定义列表
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Success 200 {object} model.Response{msg=[]model.ScriptDefinition} "获取成功"
+// @Router /admin/scripts [get]
 func listScriptDefinitions(c *gin.Context) {
-	defs, err := listScriptDefinitionsSrc()
+	defs, err := listScriptDefinitionsSrcFn()
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return
@@ -66,6 +105,15 @@ func listScriptDefinitions(c *gin.Context) {
 	response.RespSuccess(c, defs)
 }
 
+// @Summary 获取脚本定义详情
+// @Description 管理员根据脚本ID获取脚本定义
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param script_id path int true "脚本ID"
+// @Success 200 {object} model.Response{msg=model.ScriptDefinition} "获取成功"
+// @Router /admin/scripts/{script_id} [get]
 func getScriptDefinitionByID(c *gin.Context) {
 	scriptID, err := strconv.Atoi(c.Param("script_id"))
 	if err != nil {
@@ -73,7 +121,7 @@ func getScriptDefinitionByID(c *gin.Context) {
 		return
 	}
 
-	def, err := getScriptDefinitionByIDSrc(scriptID)
+	def, err := getScriptDefinitionByIDSrcFn(scriptID)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return
@@ -81,6 +129,16 @@ func getScriptDefinitionByID(c *gin.Context) {
 	response.RespSuccess(c, def)
 }
 
+// @Summary 更新脚本定义
+// @Description 管理员更新指定脚本定义
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param script_id path int true "脚本ID"
+// @Param req body model.ScriptDefinition true "更新后的脚本定义"
+// @Success 200 {object} model.Response{msg=model.ScriptDefinition} "更新成功"
+// @Router /admin/scripts/{script_id} [put]
 func updateScriptDefinition(c *gin.Context) {
 	adminID := c.GetInt("admin_token_id")
 	scriptID, err := strconv.Atoi(c.Param("script_id"))
@@ -95,7 +153,7 @@ func updateScriptDefinition(c *gin.Context) {
 		return
 	}
 
-	if err = updateScriptDefinitionSrc(adminID, scriptID, &req); err != nil {
+	if err = updateScriptDefinitionSrcFn(adminID, scriptID, &req); err != nil {
 		response.RespError(c, 500, err.Error())
 		return
 	}
@@ -103,6 +161,16 @@ func updateScriptDefinition(c *gin.Context) {
 	response.RespSuccess(c, req)
 }
 
+// @Summary 更新脚本启用状态
+// @Description 管理员更新指定脚本的启用状态
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param script_id path int true "脚本ID"
+// @Param req body updateStatusRequest true "状态请求"
+// @Success 200 {object} model.Response "更新成功"
+// @Router /admin/scripts/{script_id}/status [post]
 func updateScriptDefinitionStatus(c *gin.Context) {
 	adminID := c.GetInt("admin_token_id")
 	scriptID, err := strconv.Atoi(c.Param("script_id"))
@@ -117,13 +185,23 @@ func updateScriptDefinitionStatus(c *gin.Context) {
 		return
 	}
 
-	if err = setScriptDefinitionEnabledSrc(adminID, scriptID, req.IsEnabled); err != nil {
+	if err = setScriptDefinitionEnabledSrcFn(adminID, scriptID, req.IsEnabled); err != nil {
 		response.RespError(c, 500, err.Error())
 		return
 	}
 	response.RespSuccess(c, nil)
 }
 
+// @Summary 上传脚本版本
+// @Description 管理员上传脚本文件并创建新版本
+// @Tags Admin
+// @Accept multipart/form-data
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param script_id path int true "脚本ID"
+// @Param script_file formData file true "脚本文件"
+// @Success 200 {object} model.Response{msg=model.ScriptVersion} "上传成功"
+// @Router /admin/scripts/{script_id}/versions/upload [post]
 func uploadScriptVersion(c *gin.Context) {
 	adminID := c.GetInt("admin_token_id")
 	scriptID, err := strconv.Atoi(c.Param("script_id"))
@@ -138,7 +216,7 @@ func uploadScriptVersion(c *gin.Context) {
 		return
 	}
 
-	version, err := uploadScriptVersionSrc(adminID, scriptID, fileHeader)
+	version, err := uploadScriptVersionSrcFn(adminID, scriptID, fileHeader)
 	if err != nil {
 		log.Logger.Warn("Upload script version error: " + err.Error())
 		response.RespError(c, 500, err.Error())
@@ -148,6 +226,15 @@ func uploadScriptVersion(c *gin.Context) {
 	response.RespSuccess(c, version)
 }
 
+// @Summary 获取脚本版本列表
+// @Description 管理员获取指定脚本的版本列表
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param script_id path int true "脚本ID"
+// @Success 200 {object} model.Response{msg=[]model.ScriptVersion} "获取成功"
+// @Router /admin/scripts/{script_id}/versions [get]
 func listScriptVersions(c *gin.Context) {
 	scriptID, err := strconv.Atoi(c.Param("script_id"))
 	if err != nil {
@@ -155,7 +242,7 @@ func listScriptVersions(c *gin.Context) {
 		return
 	}
 
-	versions, err := listScriptVersionsSrc(scriptID)
+	versions, err := listScriptVersionsSrcFn(scriptID)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return
@@ -163,6 +250,16 @@ func listScriptVersions(c *gin.Context) {
 	response.RespSuccess(c, versions)
 }
 
+// @Summary 激活脚本版本
+// @Description 管理员激活指定脚本版本
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param script_id path int true "脚本ID"
+// @Param version_id path int true "版本ID"
+// @Success 200 {object} model.Response "激活成功"
+// @Router /admin/scripts/{script_id}/versions/{version_id}/activate [post]
 func activateScriptVersion(c *gin.Context) {
 	adminID := c.GetInt("admin_token_id")
 	scriptID, err := strconv.Atoi(c.Param("script_id"))
@@ -176,13 +273,22 @@ func activateScriptVersion(c *gin.Context) {
 		return
 	}
 
-	if err = activateScriptVersionSrc(adminID, scriptID, versionID); err != nil {
+	if err = activateScriptVersionSrcFn(adminID, scriptID, versionID); err != nil {
 		response.RespError(c, 500, err.Error())
 		return
 	}
 	response.RespSuccess(c, nil)
 }
 
+// @Summary 创建脚本流程
+// @Description 管理员创建脚本流程
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param req body model.ScriptFlow true "脚本流程"
+// @Success 200 {object} model.Response{msg=model.ScriptFlow} "创建成功"
+// @Router /admin/script-flows [post]
 func createScriptFlow(c *gin.Context) {
 	adminID := c.GetInt("admin_token_id")
 	var req model.ScriptFlow
@@ -191,15 +297,23 @@ func createScriptFlow(c *gin.Context) {
 		return
 	}
 
-	if err := createScriptFlowSrc(adminID, &req); err != nil {
+	if err := createScriptFlowSrcFn(adminID, &req); err != nil {
 		response.RespError(c, 500, err.Error())
 		return
 	}
 	response.RespSuccess(c, req)
 }
 
+// @Summary 获取脚本流程列表
+// @Description 管理员获取脚本流程列表
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Success 200 {object} model.Response{msg=[]model.ScriptFlow} "获取成功"
+// @Router /admin/script-flows [get]
 func listScriptFlows(c *gin.Context) {
-	flows, err := listScriptFlowsSrc()
+	flows, err := listScriptFlowsSrcFn()
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return
@@ -207,6 +321,15 @@ func listScriptFlows(c *gin.Context) {
 	response.RespSuccess(c, flows)
 }
 
+// @Summary 获取脚本流程详情
+// @Description 管理员根据流程ID获取脚本流程
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param flow_id path int true "流程ID"
+// @Success 200 {object} model.Response{msg=model.ScriptFlow} "获取成功"
+// @Router /admin/script-flows/{flow_id} [get]
 func getScriptFlowByID(c *gin.Context) {
 	flowID, err := strconv.Atoi(c.Param("flow_id"))
 	if err != nil {
@@ -214,7 +337,7 @@ func getScriptFlowByID(c *gin.Context) {
 		return
 	}
 
-	flow, err := getScriptFlowByIDSrc(flowID)
+	flow, err := getScriptFlowByIDSrcFn(flowID)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return
@@ -222,6 +345,16 @@ func getScriptFlowByID(c *gin.Context) {
 	response.RespSuccess(c, flow)
 }
 
+// @Summary 更新脚本流程
+// @Description 管理员更新指定脚本流程
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param flow_id path int true "流程ID"
+// @Param req body model.ScriptFlow true "更新后的流程"
+// @Success 200 {object} model.Response{msg=model.ScriptFlow} "更新成功"
+// @Router /admin/script-flows/{flow_id} [put]
 func updateScriptFlow(c *gin.Context) {
 	adminID := c.GetInt("admin_token_id")
 	flowID, err := strconv.Atoi(c.Param("flow_id"))
@@ -236,7 +369,7 @@ func updateScriptFlow(c *gin.Context) {
 		return
 	}
 
-	if err = updateScriptFlowSrc(adminID, flowID, &req); err != nil {
+	if err = updateScriptFlowSrcFn(adminID, flowID, &req); err != nil {
 		response.RespError(c, 500, err.Error())
 		return
 	}
@@ -244,6 +377,16 @@ func updateScriptFlow(c *gin.Context) {
 	response.RespSuccess(c, req)
 }
 
+// @Summary 更新流程启用状态
+// @Description 管理员更新指定流程的启用状态
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param flow_id path int true "流程ID"
+// @Param req body updateStatusRequest true "状态请求"
+// @Success 200 {object} model.Response "更新成功"
+// @Router /admin/script-flows/{flow_id}/status [post]
 func updateScriptFlowStatus(c *gin.Context) {
 	adminID := c.GetInt("admin_token_id")
 	flowID, err := strconv.Atoi(c.Param("flow_id"))
@@ -258,7 +401,7 @@ func updateScriptFlowStatus(c *gin.Context) {
 		return
 	}
 
-	if err = setScriptFlowEnabledSrc(adminID, flowID, req.IsEnabled); err != nil {
+	if err = setScriptFlowEnabledSrcFn(adminID, flowID, req.IsEnabled); err != nil {
 		response.RespError(c, 500, err.Error())
 		return
 	}
@@ -266,6 +409,16 @@ func updateScriptFlowStatus(c *gin.Context) {
 	response.RespSuccess(c, nil)
 }
 
+// @Summary 替换流程步骤
+// @Description 管理员替换指定流程的全部步骤
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param flow_id path int true "流程ID"
+// @Param req body []model.FlowStep true "步骤列表"
+// @Success 200 {object} model.Response "更新成功"
+// @Router /admin/script-flows/{flow_id}/steps [put]
 func replaceFlowSteps(c *gin.Context) {
 	adminID := c.GetInt("admin_token_id")
 	flowID, err := strconv.Atoi(c.Param("flow_id"))
@@ -280,7 +433,7 @@ func replaceFlowSteps(c *gin.Context) {
 		return
 	}
 
-	if err = replaceFlowStepsSrc(adminID, flowID, req); err != nil {
+	if err = replaceFlowStepsSrcFn(adminID, flowID, req); err != nil {
 		response.RespError(c, 500, err.Error())
 		return
 	}
@@ -288,6 +441,15 @@ func replaceFlowSteps(c *gin.Context) {
 	response.RespSuccess(c, nil)
 }
 
+// @Summary 获取流程步骤列表
+// @Description 管理员获取指定流程步骤
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param flow_id path int true "流程ID"
+// @Success 200 {object} model.Response{msg=[]model.FlowStep} "获取成功"
+// @Router /admin/script-flows/{flow_id}/steps [get]
 func listFlowSteps(c *gin.Context) {
 	flowID, err := strconv.Atoi(c.Param("flow_id"))
 	if err != nil {
@@ -295,7 +457,7 @@ func listFlowSteps(c *gin.Context) {
 		return
 	}
 
-	steps, err := listFlowStepsSrc(flowID)
+	steps, err := listFlowStepsSrcFn(flowID)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return
@@ -303,6 +465,15 @@ func listFlowSteps(c *gin.Context) {
 	response.RespSuccess(c, steps)
 }
 
+// @Summary 创建流程挂载
+// @Description 管理员创建流程挂载
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param req body model.FlowMount true "挂载信息"
+// @Success 200 {object} model.Response{msg=model.FlowMount} "创建成功"
+// @Router /admin/script-flows/mounts [post]
 func createFlowMount(c *gin.Context) {
 	adminID := c.GetInt("admin_token_id")
 	var req model.FlowMount
@@ -311,7 +482,7 @@ func createFlowMount(c *gin.Context) {
 		return
 	}
 
-	if err := createFlowMountSrc(adminID, &req); err != nil {
+	if err := createFlowMountSrcFn(adminID, &req); err != nil {
 		response.RespError(c, 500, err.Error())
 		return
 	}
@@ -319,6 +490,15 @@ func createFlowMount(c *gin.Context) {
 	response.RespSuccess(c, req)
 }
 
+// @Summary 删除流程挂载
+// @Description 管理员删除指定流程挂载
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param mount_id path int true "挂载ID"
+// @Success 200 {object} model.Response "删除成功"
+// @Router /admin/script-flows/mounts/{mount_id} [delete]
 func deleteFlowMount(c *gin.Context) {
 	adminID := c.GetInt("admin_token_id")
 	mountID, err := strconv.Atoi(c.Param("mount_id"))
@@ -327,7 +507,7 @@ func deleteFlowMount(c *gin.Context) {
 		return
 	}
 
-	if err = deleteFlowMountSrc(adminID, mountID); err != nil {
+	if err = deleteFlowMountSrcFn(adminID, mountID); err != nil {
 		response.RespError(c, 500, err.Error())
 		return
 	}
@@ -335,6 +515,15 @@ func deleteFlowMount(c *gin.Context) {
 	response.RespSuccess(c, nil)
 }
 
+// @Summary 获取流程挂载列表
+// @Description 管理员获取指定流程的挂载列表
+// @Tags Admin
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param flow_id path int true "流程ID"
+// @Success 200 {object} model.Response{msg=[]model.FlowMount} "获取成功"
+// @Router /admin/script-flows/{flow_id}/mounts [get]
 func listFlowMounts(c *gin.Context) {
 	flowID, err := strconv.Atoi(c.Param("flow_id"))
 	if err != nil {
@@ -342,7 +531,7 @@ func listFlowMounts(c *gin.Context) {
 		return
 	}
 
-	mounts, err := listFlowMountsByFlowSrc(flowID)
+	mounts, err := listFlowMountsByFlowSrcFn(flowID)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return

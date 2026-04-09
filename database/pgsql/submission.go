@@ -2,6 +2,7 @@ package pgsql
 
 import (
 	"main/model"
+	"strings"
 
 	"github.com/lvyonghuan/Ubik-Util/uerr"
 	"gorm.io/datatypes"
@@ -55,6 +56,41 @@ func GetWorksByAuthorID(authorID int) ([]model.Work, error) {
 	return works, nil
 }
 
+func QueryWorks(trackID *int, workTitle string, authorName string, offset int, limit int) ([]model.Work, error) {
+	var works []model.Work
+
+	query := postgresDB.Table("works").
+		Select("works.work_id", "works.work_title", "works.track_id", "works.author_id", "works.work_infos", "authors.author_name", "tracks.track_name").
+		Joins("LEFT JOIN authors ON authors.author_id = works.author_id").
+		Joins("LEFT JOIN tracks ON tracks.track_id = works.track_id")
+
+	if trackID != nil {
+		query = query.Where("works.track_id = ?", *trackID)
+	}
+
+	if trimmedTitle := strings.TrimSpace(workTitle); trimmedTitle != "" {
+		query = query.Where("works.work_title = ?", trimmedTitle)
+	}
+
+	if trimmedAuthorName := strings.TrimSpace(authorName); trimmedAuthorName != "" {
+		query = query.Where("authors.author_name = ?", trimmedAuthorName)
+	}
+
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	err := query.Order("works.work_id ASC").Offset(offset).Limit(limit).Find(&works).Error
+	if err != nil {
+		return nil, uerr.NewError(err)
+	}
+
+	return works, nil
+}
+
 func UpdateWork(work *model.Work) error {
 	err := postgresDB.Save(work).Error
 	if err != nil {
@@ -77,6 +113,19 @@ func CountWorksByAuthorAndTrack(authorID int, trackID int) (int64, error) {
 	var count int64
 	err := postgresDB.Model(&model.Work{}).
 		Where("author_id = ? AND track_id = ?", authorID, trackID).
+		Count(&count).Error
+	if err != nil {
+		return 0, uerr.NewError(err)
+	}
+
+	return count, nil
+}
+
+func CountWorksByAuthorAndContest(authorID int, contestID int) (int64, error) {
+	var count int64
+	err := postgresDB.Model(&model.Work{}).
+		Joins("JOIN tracks ON tracks.track_id = works.track_id").
+		Where("works.author_id = ? AND tracks.contest_id = ?", authorID, contestID).
 		Count(&count).Error
 	if err != nil {
 		return 0, uerr.NewError(err)

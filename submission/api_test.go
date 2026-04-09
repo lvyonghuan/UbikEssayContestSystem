@@ -72,6 +72,8 @@ func backupSubmissionHooks(t *testing.T) {
 	origDeleteWorkFn := deleteWorkFn
 	origFindWorksByAuthorIDFn := findWorksByAuthorIDFn
 	origCountWorksByAuthorAndTrackFn := countWorksByAuthorAndTrackFn
+	origCountWorksByAuthorAndContestFn := countWorksByAuthorAndContestFn
+	origGetTrackByIDFn := getTrackByIDFn
 	origSetUploadFilePermissionFn := setUploadFilePermissionFn
 	origGetStartAndEndDateFn := getStartAndEndDateFn
 	origResolveFlowForExecutionFn := resolveFlowForExecutionFn
@@ -108,6 +110,8 @@ func backupSubmissionHooks(t *testing.T) {
 		deleteWorkFn = origDeleteWorkFn
 		findWorksByAuthorIDFn = origFindWorksByAuthorIDFn
 		countWorksByAuthorAndTrackFn = origCountWorksByAuthorAndTrackFn
+		countWorksByAuthorAndContestFn = origCountWorksByAuthorAndContestFn
+		getTrackByIDFn = origGetTrackByIDFn
 		setUploadFilePermissionFn = origSetUploadFilePermissionFn
 		getStartAndEndDateFn = origGetStartAndEndDateFn
 		resolveFlowForExecutionFn = origResolveFlowForExecutionFn
@@ -213,6 +217,12 @@ func setupSubmissionRouteMocks(t *testing.T) {
 	}
 	updateSubmissionSrcFn = func(work *model.Work) error { return nil }
 	deleteSubmissionSrcFn = func(work *model.Work) error { return nil }
+	getTrackByIDFn = func(trackID int) (model.Track, error) {
+		return model.Track{TrackID: trackID, ContestID: 100}, nil
+	}
+	countWorksByAuthorAndContestFn = func(authorID int, contestID int) (int64, error) {
+		return 0, nil
+	}
 
 	getUploadFilePermissionFn = func(workID int) (int, int, error) { return 1, 2, nil }
 	runTrackHookFn = func(scope string, eventKey string, trackID int, payload map[string]any) (scriptflow.ChainResult, error) {
@@ -239,14 +249,14 @@ func TestSubmissionRoutesSmokeSuccess(t *testing.T) {
 		body   []byte
 		isFile bool
 	}{
-		{http.MethodPost, "/api/v1/author/register", "", []byte(`{"authorName":"u","password":"p"}`), false},
-		{http.MethodPost, "/api/v1/author/login", "", []byte(`{"authorID":1,"password":"p"}`), false},
+		{http.MethodPost, "/api/v1/author/register", "", []byte(`{"authorName":"u","password":"p","authorEmail":"u@example.com"}`), false},
+		{http.MethodPost, "/api/v1/author/login", "", []byte(`{"authorName":"u","password":"p"}`), false},
 		{http.MethodGet, "/api/v1/author/refresh", "Bearer refresh-author", nil, false},
 		{http.MethodPut, "/api/v1/author", "Bearer author", []byte(`{"authorID":1,"authorName":"u2"}`), false},
 		{http.MethodPost, "/api/v1/author/submission", "Bearer author", []byte(`{"authorID":1,"trackID":2,"workTitle":"w"}`), false},
 		{http.MethodPut, "/api/v1/author/submission", "Bearer author", []byte(`{"workID":1,"authorID":1,"trackID":2,"workTitle":"w2"}`), false},
 		{http.MethodDelete, "/api/v1/author/submission", "Bearer author", []byte(`{"workID":1,"authorID":1,"trackID":2,"workTitle":"w2"}`), false},
-		{http.MethodGet, "/api/v1/author/submission/1", "Bearer author", nil, false},
+		{http.MethodGet, "/api/v1/author/submission", "Bearer author", nil, false},
 	}
 
 	for _, tc := range cases {
@@ -356,12 +366,12 @@ func TestSubmissionAuthFailurePaths(t *testing.T) {
 	setupSubmissionRouteMocks(t)
 	router := buildSubmissionRouter()
 
-	w := doJSONRequest(router, http.MethodGet, "/api/v1/author/submission/1", "", nil)
+	w := doJSONRequest(router, http.MethodGet, "/api/v1/author/submission", "", nil)
 	if code := decodeRespCode(t, w.Body.Bytes()); code != 401 {
 		t.Fatalf("expected 401, got %d", code)
 	}
 
-	w = doJSONRequest(router, http.MethodGet, "/api/v1/author/submission/1", "Bearer admin", nil)
+	w = doJSONRequest(router, http.MethodGet, "/api/v1/author/submission", "Bearer admin", nil)
 	if code := decodeRespCode(t, w.Body.Bytes()); code != 403 {
 		t.Fatalf("expected 403, got %d", code)
 	}
@@ -410,7 +420,7 @@ func TestSubmissionHandlersErrorPaths(t *testing.T) {
 	router := buildSubmissionRouter()
 
 	registerAuthorSrcFn = func(author *model.Author) error { return errors.New("register failed") }
-	w := doJSONRequest(router, http.MethodPost, "/api/v1/author/register", "", []byte(`{"authorName":"u","password":"p"}`))
+	w := doJSONRequest(router, http.MethodPost, "/api/v1/author/register", "", []byte(`{"authorName":"u","password":"p","authorEmail":"u@example.com"}`))
 	if code := decodeRespCode(t, w.Body.Bytes()); code != 500 {
 		t.Fatalf("expected 500, got %d", code)
 	}
@@ -420,10 +430,15 @@ func TestSubmissionHandlersErrorPaths(t *testing.T) {
 		t.Fatalf("expected 400, got %d", code)
 	}
 
+	w = doJSONRequest(router, http.MethodPost, "/api/v1/author/register", "", []byte(`{"authorName":"u","password":"p"}`))
+	if code := decodeRespCode(t, w.Body.Bytes()); code != 400 {
+		t.Fatalf("expected 400 when authorEmail is missing, got %d", code)
+	}
+
 	authorLoginSrcFn = func(author *model.Author) (token.ResponseToken, error) {
 		return token.ResponseToken{}, errors.New("login failed")
 	}
-	w = doJSONRequest(router, http.MethodPost, "/api/v1/author/login", "", []byte(`{"authorID":1,"password":"x"}`))
+	w = doJSONRequest(router, http.MethodPost, "/api/v1/author/login", "", []byte(`{"authorName":"u","password":"x"}`))
 	if code := decodeRespCode(t, w.Body.Bytes()); code != 500 {
 		t.Fatalf("expected 500, got %d", code)
 	}
@@ -475,16 +490,8 @@ func TestSubmissionHandlersErrorPaths(t *testing.T) {
 		t.Fatalf("expected 500, got %d", code)
 	}
 
-	w = doJSONRequest(router, http.MethodGet, "/api/v1/author/submission/bad", "Bearer author", nil)
-	if code := decodeRespCode(t, w.Body.Bytes()); code != 400 {
-		t.Fatalf("expected 400, got %d", code)
-	}
-	w = doJSONRequest(router, http.MethodGet, "/api/v1/author/submission/2", "Bearer author", nil)
-	if code := decodeRespCode(t, w.Body.Bytes()); code != 403 {
-		t.Fatalf("expected 403, got %d", code)
-	}
 	findSubmissionsByAuthorIDFn = func(authorID int) ([]model.Work, error) { return nil, errors.New("query failed") }
-	w = doJSONRequest(router, http.MethodGet, "/api/v1/author/submission/1", "Bearer author", nil)
+	w = doJSONRequest(router, http.MethodGet, "/api/v1/author/submission", "Bearer author", nil)
 	if code := decodeRespCode(t, w.Body.Bytes()); code != 500 {
 		t.Fatalf("expected 500, got %d", code)
 	}

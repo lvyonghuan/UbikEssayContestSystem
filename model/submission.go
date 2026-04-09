@@ -10,9 +10,11 @@ type Author struct {
 }
 
 type Work struct {
-	WorkID    int            `gorm:"primaryKey;autoIncrement" json:"workID"`
-	WorkTitle string         `json:"workTitle"`
-	TrackID   int            `json:"trackID"`
-	AuthorID  int            `json:"authorID"`
-	WorkInfos map[string]any `gorm:"type:jsonb;serializer:json" json:"workInfos"`
+	WorkID     int            `gorm:"primaryKey;autoIncrement" json:"workID"`
+	WorkTitle  string         `json:"workTitle"`
+	TrackID    int            `json:"trackID"`
+	AuthorID   int            `json:"authorID"`
+	AuthorName string         `gorm:"column:author_name;->" json:"authorName,omitempty"`
+	TrackName  string         `gorm:"column:track_name;->" json:"trackName,omitempty"`
+	WorkInfos  map[string]any `gorm:"type:jsonb;serializer:json" json:"workInfos"`
 }

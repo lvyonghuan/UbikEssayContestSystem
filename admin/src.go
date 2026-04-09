@@ -34,10 +34,15 @@ var (
 	deleteTrackFn      = pgsql.DeleteTrack
 	createTrackCacheFn = redis.CreateTrack
 	deleteTrackCacheFn = redis.DeleteTrack
+	listAuthorsFn      = pgsql.ListAuthors
+	getAuthorByIDFn    = pgsql.GetAuthorByAuthorID
+	updateAuthorByIDFn = pgsql.UpdateAuthorByID
+	deleteAuthorByIDFn = pgsql.DeleteAuthorByID
 
 	getWorkByIDFn      = pgsql.GetWorkByID
 	getWorksByTrackFn  = pgsql.GetWorksByTrackID
 	getWorksByAuthorFn = pgsql.GetWorksByAuthorID
+	queryWorksFn       = pgsql.QueryWorks
 	deleteWorkByIDFn   = pgsql.DeleteWorkByID
 	deleteUploadPermFn = redis.DeleteUploadFilePermission
 
@@ -48,6 +53,7 @@ var (
 )
 
 var (
+	errAuthorNotFound   = errors.New("author not found")
 	errWorkNotFound     = errors.New("work not found")
 	errWorkFileNotFound = errors.New("work file not found")
 )
@@ -56,6 +62,9 @@ func loginSrc(admin model.Admin) (token.ResponseToken, error) {
 	dbAdmin, err := findAdminByUsernameFn(admin.AdminName)
 	if err != nil {
 		return token.ResponseToken{}, err
+	}
+	if !dbAdmin.IsActive {
+		return token.ResponseToken{}, uerr.NewError(errors.New("admin account is disabled"))
 	}
 
 	isSame := password.CheckPasswordHash(admin.Password, dbAdmin.Password)
@@ -205,6 +214,74 @@ func deleteTrackSrc(adminID int, trackID int) error {
 	return nil
 }
 
+func listAuthorsSrc(authorName string, offset int, limit int) ([]model.Author, error) {
+	authors, err := listAuthorsFn(authorName, offset, limit)
+	if err != nil {
+		parsedErr := uerr.ExtractError(err)
+		log.Logger.Warn("List authors error: " + err.Error())
+		return nil, parsedErr
+	}
+
+	return authors, nil
+}
+
+func getAuthorByIDSrc(authorID int) (model.Author, error) {
+	author := model.Author{AuthorID: authorID}
+	err := getAuthorByIDFn(&author)
+	if err != nil {
+		parsedErr := uerr.ExtractError(err)
+		if errors.Is(parsedErr, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(parsedErr.Error()), "record not found") {
+			return model.Author{}, errAuthorNotFound
+		}
+		log.Logger.Warn("Get author by id error: " + err.Error())
+		return model.Author{}, parsedErr
+	}
+
+	return author, nil
+}
+
+func updateAuthorSrc(adminID int, authorID int, updatedAuthor *model.Author) (model.Author, error) {
+	author, err := updateAuthorByIDFn(authorID, updatedAuthor)
+	if err != nil {
+		parsedErr := uerr.ExtractError(err)
+		if errors.Is(parsedErr, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(parsedErr.Error()), "record not found") {
+			return model.Author{}, errAuthorNotFound
+		}
+		log.Logger.Warn("Update author error: " + err.Error())
+		return model.Author{}, parsedErr
+	}
+
+	createActionLogFn(adminID, _const.Authors, _const.Update,
+		genDetails(
+			[]string{"author_id", "author_name"},
+			[]string{strconv.Itoa(author.AuthorID), author.AuthorName},
+		),
+	)
+
+	return author, nil
+}
+
+func deleteAuthorSrc(adminID int, authorID int) error {
+	author, err := deleteAuthorByIDFn(authorID)
+	if err != nil {
+		parsedErr := uerr.ExtractError(err)
+		if errors.Is(parsedErr, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(parsedErr.Error()), "record not found") {
+			return errAuthorNotFound
+		}
+		log.Logger.Warn("Delete author error: " + err.Error())
+		return parsedErr
+	}
+
+	createActionLogFn(adminID, _const.Authors, _const.Delete,
+		genDetails(
+			[]string{"author_id", "author_name"},
+			[]string{strconv.Itoa(author.AuthorID), author.AuthorName},
+		),
+	)
+
+	return nil
+}
+
 func getWorkByIDSrc(workID int) (model.Work, error) {
 	work, err := getWorkByIDFn(workID)
 	if err != nil {
@@ -235,6 +312,17 @@ func getWorksByAuthorIDSrc(authorID int) ([]model.Work, error) {
 	if err != nil {
 		parsedErr := uerr.ExtractError(err)
 		log.Logger.Warn("Get works by author id error: " + err.Error())
+		return nil, parsedErr
+	}
+
+	return works, nil
+}
+
+func queryWorksSrc(trackID *int, workTitle string, authorName string, offset int, limit int) ([]model.Work, error) {
+	works, err := queryWorksFn(trackID, workTitle, authorName, offset, limit)
+	if err != nil {
+		parsedErr := uerr.ExtractError(err)
+		log.Logger.Warn("Query works error: " + err.Error())
 		return nil, parsedErr
 	}
 

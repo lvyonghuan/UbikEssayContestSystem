@@ -4,10 +4,8 @@ export interface MenuItem {
 }
 
 export const sidebarMenu: MenuItem[] = [
-  { label: '看板', routeName: 'dashboard' },
-  { label: '赛事管理', routeName: 'contests' },
-  { label: '赛道管理', routeName: 'tracks' },
+  { label: '比赛看板', routeName: 'dashboard' },
+  { label: '作者管理', routeName: 'authors' },
+  { label: '子管理员', routeName: 'admins' },
   { label: '全局配置', routeName: 'global-config' },
-  { label: '角色权限', routeName: 'roles' },
-  { label: '管理员管理', routeName: 'admins' },
 ]

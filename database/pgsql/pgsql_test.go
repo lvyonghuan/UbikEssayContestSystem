@@ -23,6 +23,10 @@ func setupTestDB(t *testing.T) *gorm.DB {
 
 	schema := []string{
 		`CREATE TABLE admins (admin_id INTEGER PRIMARY KEY AUTOINCREMENT, admin_name TEXT UNIQUE, password TEXT, admin_email TEXT, is_active BOOLEAN);`,
+		`CREATE TABLE permissions (permission_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, resource TEXT, action TEXT, meta TEXT);`,
+		`CREATE TABLE roles (role_id INTEGER PRIMARY KEY AUTOINCREMENT, role_name TEXT UNIQUE, description TEXT, is_default BOOLEAN, is_super BOOLEAN, meta TEXT);`,
+		`CREATE TABLE role_permissions (role_id INTEGER NOT NULL, permission_id INTEGER NOT NULL, PRIMARY KEY (role_id, permission_id));`,
+		`CREATE TABLE admin_roles (admin_id INTEGER NOT NULL, role_id INTEGER NOT NULL, PRIMARY KEY (admin_id, role_id));`,
 		`CREATE TABLE contests (contest_id INTEGER PRIMARY KEY AUTOINCREMENT, contest_name TEXT, contest_start_date DATE, contest_end_date DATE, contest_introduction TEXT);`,
 		`CREATE TABLE tracks (track_id INTEGER PRIMARY KEY AUTOINCREMENT, track_name TEXT, contest_id INTEGER, track_description TEXT, track_settings TEXT);`,
 		`CREATE TABLE works (work_id INTEGER PRIMARY KEY AUTOINCREMENT, work_title TEXT, track_id INTEGER, author_id INTEGER, work_infos TEXT);`,
@@ -36,6 +40,12 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		`CREATE TABLE author (author_id INTEGER PRIMARY KEY AUTOINCREMENT, author_name TEXT, pen_name TEXT, password TEXT, author_email TEXT, author_infos TEXT);`,
 		`CREATE TABLE authors (author_id INTEGER PRIMARY KEY AUTOINCREMENT, author_name TEXT, pen_name TEXT, password TEXT, author_email TEXT, author_infos TEXT);`,
 		`INSERT INTO global_config (id, is_init, site_name) VALUES (1, 0, 'Ubik');`,
+		`INSERT INTO permissions (name, resource, action) VALUES ('super', '*', '*');`,
+		`INSERT INTO permissions (name, resource, action) VALUES ('author.read', 'author', 'read');`,
+		`INSERT INTO permissions (name, resource, action) VALUES ('author.update', 'author', 'update');`,
+		`INSERT INTO permissions (name, resource, action) VALUES ('author.delete', 'author', 'delete');`,
+		`INSERT INTO permissions (name, resource, action) VALUES ('works.read', 'works', 'read');`,
+		`INSERT INTO roles (role_name, description, is_super) VALUES ('superadmin', 'super role', 1);`,
 	}
 
 	for _, stmt := range schema {
@@ -134,6 +144,17 @@ func TestAdminAndSubmissionFunctions(t *testing.T) {
 		t.Fatalf("GetWorksByAuthorID failed: %v len=%d", err, len(worksByAuthor))
 	}
 
+	if err := db.Exec(`INSERT INTO authors (author_id, author_name, password, author_email) VALUES (1, 'author_a', 'p', 'author_a@example.com')`).Error; err != nil {
+		t.Fatalf("seed author for query works failed: %v", err)
+	}
+	queryWorks, err := QueryWorks(nil, "Work A", "author_a", 0, 20)
+	if err != nil || len(queryWorks) != 1 {
+		t.Fatalf("QueryWorks failed: %v len=%d", err, len(queryWorks))
+	}
+	if queryWorks[0].AuthorName != "author_a" || queryWorks[0].TrackName == "" {
+		t.Fatalf("QueryWorks should return authorName and trackName, got %+v", queryWorks[0])
+	}
+
 	work.WorkTitle = "Work Updated"
 	if err := UpdateWork(work); err != nil {
 		t.Fatalf("UpdateWork failed: %v", err)
@@ -165,7 +186,7 @@ func TestAdminAndSubmissionFunctions(t *testing.T) {
 func TestAuthorFunctions(t *testing.T) {
 	db := setupTestDB(t)
 
-	if err := db.Exec(`INSERT INTO author (author_name, password, author_email) VALUES ('alpha', 'p', 'a@example.com')`).Error; err != nil {
+	if err := db.Exec(`INSERT INTO authors (author_name, password, author_email) VALUES ('alpha', 'p', 'a@example.com')`).Error; err != nil {
 		t.Fatalf("seed author table failed: %v", err)
 	}
 
@@ -180,7 +201,7 @@ func TestAuthorFunctions(t *testing.T) {
 	}
 
 	var id int
-	if err := db.Table("author").Select("author_id").Where("author_name = ?", "alpha").Scan(&id).Error; err != nil {
+	if err := db.Table("authors").Select("author_id").Where("author_name = ?", "alpha").Scan(&id).Error; err != nil {
 		t.Fatalf("query author id failed: %v", err)
 	}
 
@@ -197,8 +218,137 @@ func TestAuthorFunctions(t *testing.T) {
 	if err := UpdateAuthor(created); err != nil {
 		t.Fatalf("UpdateAuthor failed: %v", err)
 	}
+
+	listed, err := ListAuthors("alpha", 0, 20)
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("ListAuthors failed: %v len=%d", err, len(listed))
+	}
+
+	updatedByID, err := UpdateAuthorByID(created.AuthorID, &model.Author{AuthorName: "beta_new", PenName: "Beta New", AuthorEmail: "b@example.com"})
+	if err != nil || updatedByID.AuthorName != "beta_new" {
+		t.Fatalf("UpdateAuthorByID failed: %v %+v", err, updatedByID)
+	}
+
+	deletedByID, err := DeleteAuthorByID(created.AuthorID)
+	if err != nil || deletedByID.AuthorID != created.AuthorID {
+		t.Fatalf("DeleteAuthorByID failed: %v %+v", err, deletedByID)
+	}
+
+	if _, err := DeleteAuthorByID(created.AuthorID); err == nil {
+		t.Fatal("DeleteAuthorByID should fail for non-existing author")
+	}
+
 	if err := DeleteAuthor(created); err != nil {
 		t.Fatalf("DeleteAuthor failed: %v", err)
+	}
+}
+
+func TestAdminRBACFunctions(t *testing.T) {
+	db := setupTestDB(t)
+
+	if err := db.Exec(`INSERT INTO admins (admin_name, password, admin_email, is_active) VALUES ('superadmin_local', 'p', 'super@example.com', 1)`).Error; err != nil {
+		t.Fatalf("seed super admin failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO admins (admin_name, password, admin_email, is_active) VALUES ('subadmin_local', 'p', 'sub@example.com', 1)`).Error; err != nil {
+		t.Fatalf("seed sub admin failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO roles (role_name, description, is_super) VALUES ('sub-role-local', 'sub role', 0)`).Error; err != nil {
+		t.Fatalf("seed sub role failed: %v", err)
+	}
+
+	var superAdminID, subAdminID int
+	if err := db.Raw(`SELECT admin_id FROM admins WHERE admin_name = 'superadmin_local'`).Scan(&superAdminID).Error; err != nil {
+		t.Fatalf("query super admin id failed: %v", err)
+	}
+	if err := db.Raw(`SELECT admin_id FROM admins WHERE admin_name = 'subadmin_local'`).Scan(&subAdminID).Error; err != nil {
+		t.Fatalf("query sub admin id failed: %v", err)
+	}
+
+	var superRoleID, subRoleID, worksReadPermID int
+	if err := db.Raw(`SELECT role_id FROM roles WHERE role_name = 'superadmin'`).Scan(&superRoleID).Error; err != nil {
+		t.Fatalf("query super role id failed: %v", err)
+	}
+	if err := db.Raw(`SELECT role_id FROM roles WHERE role_name = 'sub-role-local'`).Scan(&subRoleID).Error; err != nil {
+		t.Fatalf("query sub role id failed: %v", err)
+	}
+	if err := db.Raw(`SELECT permission_id FROM permissions WHERE name = 'works.read'`).Scan(&worksReadPermID).Error; err != nil {
+		t.Fatalf("query permission id failed: %v", err)
+	}
+
+	if err := db.Exec(`INSERT INTO admin_roles (admin_id, role_id) VALUES (?, ?)`, superAdminID, superRoleID).Error; err != nil {
+		t.Fatalf("bind super role failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO admin_roles (admin_id, role_id) VALUES (?, ?)`, subAdminID, subRoleID).Error; err != nil {
+		t.Fatalf("bind sub role failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)`, subRoleID, worksReadPermID).Error; err != nil {
+		t.Fatalf("bind role permission failed: %v", err)
+	}
+
+	isSuper, err := IsAdminSuper(superAdminID)
+	if err != nil || !isSuper {
+		t.Fatalf("IsAdminSuper for super failed: %v, %v", err, isSuper)
+	}
+
+	hasPerm, err := AdminHasPermission(subAdminID, "works.read")
+	if err != nil || !hasPerm {
+		t.Fatalf("AdminHasPermission failed: %v, %v", err, hasPerm)
+	}
+
+	perms, err := ListAdminPermissionNames(subAdminID)
+	if err != nil || len(perms) != 1 || perms[0] != "works.read" {
+		t.Fatalf("ListAdminPermissionNames unexpected: err=%v perms=%v", err, perms)
+	}
+
+	if err := SetAdminActive(subAdminID, false); err != nil {
+		t.Fatalf("SetAdminActive false failed: %v", err)
+	}
+	active, err := IsAdminActive(subAdminID)
+	if err != nil || active {
+		t.Fatalf("IsAdminActive after disable unexpected: err=%v active=%v", err, active)
+	}
+	if err := SetAdminActive(subAdminID, true); err != nil {
+		t.Fatalf("SetAdminActive true failed: %v", err)
+	}
+
+	created := &model.Admin{AdminName: "new_sub", Password: "p", AdminEmail: "new_sub@example.com", IsActive: true}
+	if err := CreateSubAdmin(created, []string{"works.read"}); err != nil {
+		t.Fatalf("CreateSubAdmin failed: %v", err)
+	}
+	if created.AdminID == 0 {
+		t.Fatal("CreateSubAdmin should assign admin id")
+	}
+
+	subAdmins, err := ListSubAdmins()
+	if err != nil {
+		t.Fatalf("ListSubAdmins failed: %v", err)
+	}
+	if len(subAdmins) == 0 {
+		t.Fatal("ListSubAdmins should not be empty")
+	}
+
+	if err := SetSubAdminPermissions(created.AdminID, []string{}); err != nil {
+		t.Fatalf("SetSubAdminPermissions failed: %v", err)
+	}
+
+	if err := GrantSuperRole(created.AdminID); err != nil {
+		t.Fatalf("GrantSuperRole failed: %v", err)
+	}
+	createdIsSuper, err := IsAdminSuper(created.AdminID)
+	if err != nil || !createdIsSuper {
+		t.Fatalf("newly granted super role not effective: err=%v isSuper=%v", err, createdIsSuper)
+	}
+
+	if err := HandoverSuperAdmin(superAdminID, subAdminID); err != nil {
+		t.Fatalf("HandoverSuperAdmin failed: %v", err)
+	}
+	oldActive, err := IsAdminActive(superAdminID)
+	if err != nil || oldActive {
+		t.Fatalf("old super admin should be disabled: err=%v active=%v", err, oldActive)
+	}
+	newIsSuper, err := IsAdminSuper(subAdminID)
+	if err != nil || !newIsSuper {
+		t.Fatalf("new super admin role should be granted: err=%v isSuper=%v", err, newIsSuper)
 	}
 }
 
@@ -533,11 +683,20 @@ func TestErrorBranches(t *testing.T) {
 		if err := db.Exec(`DROP TABLE authors`).Error; err != nil {
 			t.Fatalf("drop authors failed: %v", err)
 		}
+		if _, err := ListAuthors("", 0, 20); err == nil {
+			t.Fatal("ListAuthors should fail when table is missing")
+		}
 		if err := CreateAuthor(&model.Author{AuthorName: "x"}); err == nil {
 			t.Fatal("CreateAuthor should fail when table is missing")
 		}
 		if err := UpdateAuthor(&model.Author{AuthorID: 1, AuthorName: "n"}); err == nil {
 			t.Fatal("UpdateAuthor should fail when table is missing")
+		}
+		if _, err := UpdateAuthorByID(1, &model.Author{AuthorName: "n"}); err == nil {
+			t.Fatal("UpdateAuthorByID should fail when table is missing")
+		}
+		if _, err := DeleteAuthorByID(1); err == nil {
+			t.Fatal("DeleteAuthorByID should fail when table is missing")
 		}
 		if err := DeleteAuthor(&model.Author{AuthorID: 1}); err == nil {
 			t.Fatal("DeleteAuthor should fail when table is missing")

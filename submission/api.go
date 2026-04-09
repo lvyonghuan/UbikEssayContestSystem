@@ -58,6 +58,16 @@ func authorRegister(c *gin.Context) {
 		return
 	}
 
+	author.AuthorEmail = strings.TrimSpace(author.AuthorEmail)
+	if author.AuthorEmail == "" {
+		response.RespError(c, 400, "bad request: author email is required")
+		return
+	}
+
+	if strings.TrimSpace(author.PenName) == "" {
+		author.PenName = author.AuthorName
+	}
+
 	err = registerAuthorSrcFn(&author)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
@@ -145,11 +155,6 @@ func updateAuthor(c *gin.Context) {
 		return
 	}
 
-	if author.AuthorID != c.GetInt("author_token_id") {
-		response.RespError(c, 403, "Forbidden")
-		return
-	}
-
 	err = updateAuthorSrcFn(&author)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
@@ -196,23 +201,11 @@ func submissionWork(c *gin.Context) {
 // @Accept application/json
 // @Produce application/json
 // @Param Authorization header string true "Bearer {access_token}"
-// @Param id path int true "作者ID"
 // @Success 200 {object} model.Response{msg=[]model.Work} "获取成功，返回提交记录列表"
-// @Router /author/submission/{id} [get]
+// @Router /author/submission [get]
 func getSubmissions(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		response.RespError(c, 400, "bad request")
-		return
-	}
-
-	if id != c.GetInt("author_token_id") {
-		response.RespError(c, 403, "Forbidden")
-		return
-	}
-
-	works, err := findSubmissionsByAuthorIDFn(id)
+	authorID := c.GetInt("author_token_id")
+	works, err := findSubmissionsByAuthorIDFn(authorID)
 	if err != nil {
 		response.RespError(c, 500, err.Error())
 		return

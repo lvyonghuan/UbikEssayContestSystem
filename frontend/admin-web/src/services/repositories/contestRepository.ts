@@ -12,22 +12,32 @@ function normalizeContestPayload(payload: Contest): Contest {
 }
 
 export async function fetchContests() {
-  const { data } = await systemClient.get<ApiResponse<Contest[]>>('/contests/')
+  const { data } = await systemClient.get<ApiResponse<Contest[]>>('/contests')
   const msg = unwrapResponse(data) || []
   return Array.isArray(msg) ? msg : []
 }
 
+export async function fetchContestByID(contestId: number) {
+  try {
+    const { data } = await systemClient.get<ApiResponse<Contest>>(`/contests/${contestId}`)
+    return unwrapResponse(data)
+  } catch {
+    const contests = await fetchContests()
+    return contests.find((contest) => contest.contestID === contestId) || null
+  }
+}
+
 export async function createContest(payload: Contest) {
-  const { data } = await adminClient.post<ApiResponse<Contest>>('/admin/contest/', normalizeContestPayload(payload))
+  const { data } = await adminClient.post<ApiResponse<Contest>>('/admin/contest', normalizeContestPayload(payload))
   return unwrapResponse(data)
 }
 
 export async function updateContest(contestId: number, payload: Contest) {
-  const { data } = await adminClient.put<ApiResponse<Contest>>(`/admin/contest/${contestId}/`, normalizeContestPayload(payload))
+  const { data } = await adminClient.put<ApiResponse<Contest>>(`/admin/contest/${contestId}`, normalizeContestPayload(payload))
   return unwrapResponse(data)
 }
 
 export async function removeContest(contestId: number) {
-  const { data } = await adminClient.delete<ApiResponse<null>>(`/admin/contest/${contestId}/`)
+  const { data } = await adminClient.delete<ApiResponse<null>>(`/admin/contest/${contestId}`)
   unwrapResponse(data)
 }

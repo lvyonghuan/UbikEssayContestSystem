@@ -9,16 +9,16 @@ export async function fetchTracks(contestId: number) {
 }
 
 export async function createTrack(payload: Track) {
-  const { data } = await adminClient.post<ApiResponse<Track>>('/admin/track/', payload)
+  const { data } = await adminClient.post<ApiResponse<Track>>('/admin/track', payload)
   return unwrapResponse(data)
 }
 
 export async function updateTrack(trackId: number, payload: Track) {
-  const { data } = await adminClient.put<ApiResponse<Track>>(`/admin/track/${trackId}/`, payload)
+  const { data } = await adminClient.put<ApiResponse<Track>>(`/admin/track/${trackId}`, payload)
   return unwrapResponse(data)
 }
 
 export async function removeTrack(trackId: number) {
-  const { data } = await adminClient.delete<ApiResponse<null>>(`/admin/track/${trackId}/`)
+  const { data } = await adminClient.delete<ApiResponse<null>>(`/admin/track/${trackId}`)
   unwrapResponse(data)
 }

@@ -40,14 +40,31 @@ func backupSrcHooks(t *testing.T) {
 	origDeleteTrackFn := deleteTrackFn
 	origCreateTrackCacheFn := createTrackCacheFn
 	origDeleteTrackCacheFn := deleteTrackCacheFn
+	origListAuthorsFn := listAuthorsFn
+	origGetAuthorByIDFn := getAuthorByIDFn
+	origUpdateAuthorByIDFn := updateAuthorByIDFn
+	origDeleteAuthorByIDFn := deleteAuthorByIDFn
 	origGetWorkByIDFn := getWorkByIDFn
 	origGetWorksByTrackFn := getWorksByTrackFn
 	origGetWorksByAuthorFn := getWorksByAuthorFn
+	origQueryWorksFn := queryWorksFn
 	origDeleteWorkByIDFn := deleteWorkByIDFn
 	origDeleteUploadPermFn := deleteUploadPermFn
 	origCreateActionLogFn := createActionLogFn
 	origReadDirFn := readDirFn
 	origRemoveFn := removeFn
+	origIsAdminActiveFn := isAdminActiveFn
+	origIsAdminSuperFn := isAdminSuperFn
+	origHasAdminPermissionFn := hasAdminPermissionFn
+	origListPermissionNamesFn := listPermissionNamesFn
+	origListSubAdminsFn := listSubAdminsFn
+	origCreateSubAdminFn := createSubAdminFn
+	origSetSubAdminPermsFn := setSubAdminPermsFn
+	origDeleteSubAdminByIDFn := deleteSubAdminByIDFn
+	origSetAdminActiveFn := setAdminActiveFn
+	origHandoverSuperAdminFn := handoverSuperAdminFn
+	origGetSystemEmailConfigFn := getSystemEmailConfigFn
+	origSendSMTPMailFn := sendSMTPMailFn
 
 	log.Logger = testLogger{}
 
@@ -65,14 +82,31 @@ func backupSrcHooks(t *testing.T) {
 		deleteTrackFn = origDeleteTrackFn
 		createTrackCacheFn = origCreateTrackCacheFn
 		deleteTrackCacheFn = origDeleteTrackCacheFn
+		listAuthorsFn = origListAuthorsFn
+		getAuthorByIDFn = origGetAuthorByIDFn
+		updateAuthorByIDFn = origUpdateAuthorByIDFn
+		deleteAuthorByIDFn = origDeleteAuthorByIDFn
 		getWorkByIDFn = origGetWorkByIDFn
 		getWorksByTrackFn = origGetWorksByTrackFn
 		getWorksByAuthorFn = origGetWorksByAuthorFn
+		queryWorksFn = origQueryWorksFn
 		deleteWorkByIDFn = origDeleteWorkByIDFn
 		deleteUploadPermFn = origDeleteUploadPermFn
 		createActionLogFn = origCreateActionLogFn
 		readDirFn = origReadDirFn
 		removeFn = origRemoveFn
+		isAdminActiveFn = origIsAdminActiveFn
+		isAdminSuperFn = origIsAdminSuperFn
+		hasAdminPermissionFn = origHasAdminPermissionFn
+		listPermissionNamesFn = origListPermissionNamesFn
+		listSubAdminsFn = origListSubAdminsFn
+		createSubAdminFn = origCreateSubAdminFn
+		setSubAdminPermsFn = origSetSubAdminPermsFn
+		deleteSubAdminByIDFn = origDeleteSubAdminByIDFn
+		setAdminActiveFn = origSetAdminActiveFn
+		handoverSuperAdminFn = origHandoverSuperAdminFn
+		getSystemEmailConfigFn = origGetSystemEmailConfigFn
+		sendSMTPMailFn = origSendSMTPMailFn
 	})
 }
 
@@ -88,7 +122,7 @@ func TestLoginSrc(t *testing.T) {
 		if username != "admin" {
 			return model.Admin{}, errors.New("not found")
 		}
-		return model.Admin{AdminID: 7, Password: hash}, nil
+		return model.Admin{AdminID: 7, Password: hash, IsActive: true}, nil
 	}
 	genTokenAndRefreshTokenFn = func(userID int64, role string) (token.ResponseToken, error) {
 		if userID != 7 || role != _const.RoleAdmin {
@@ -108,6 +142,14 @@ func TestLoginSrc(t *testing.T) {
 	_, err = loginSrc(model.Admin{AdminName: "admin", Password: "wrong"})
 	if err == nil {
 		t.Fatal("loginSrc should fail on wrong password")
+	}
+
+	findAdminByUsernameFn = func(username string) (model.Admin, error) {
+		return model.Admin{AdminID: 7, Password: hash, IsActive: false}, nil
+	}
+	_, err = loginSrc(model.Admin{AdminName: "admin", Password: "pass"})
+	if err == nil {
+		t.Fatal("loginSrc should fail when admin is disabled")
 	}
 }
 
@@ -224,6 +266,76 @@ func TestTrackSrcUpdateDelete(t *testing.T) {
 	}
 }
 
+func TestAuthorSrcPaths(t *testing.T) {
+	backupSrcHooks(t)
+
+	listAuthorsFn = func(authorName string, offset int, limit int) ([]model.Author, error) {
+		if authorName != "alpha" || offset != 1 || limit != 10 {
+			t.Fatalf("unexpected list authors args: %s %d %d", authorName, offset, limit)
+		}
+		return []model.Author{{AuthorID: 1, AuthorName: "alpha"}}, nil
+	}
+	authors, err := listAuthorsSrc("alpha", 1, 10)
+	if err != nil || len(authors) != 1 {
+		t.Fatalf("listAuthorsSrc failed: %v %+v", err, authors)
+	}
+
+	getAuthorByIDFn = func(author *model.Author) error {
+		author.AuthorName = "author_1"
+		author.AuthorEmail = "a1@example.com"
+		return nil
+	}
+	author, err := getAuthorByIDSrc(1)
+	if err != nil || author.AuthorName != "author_1" {
+		t.Fatalf("getAuthorByIDSrc failed: %v %+v", err, author)
+	}
+
+	getAuthorByIDFn = func(author *model.Author) error {
+		return uerr.NewError(gorm.ErrRecordNotFound)
+	}
+	_, err = getAuthorByIDSrc(2)
+	if !errors.Is(err, errAuthorNotFound) {
+		t.Fatalf("expected errAuthorNotFound, got %v", err)
+	}
+
+	logged := false
+	updateAuthorByIDFn = func(authorID int, updated *model.Author) (model.Author, error) {
+		return model.Author{AuthorID: authorID, AuthorName: "updated"}, nil
+	}
+	createActionLogFn = func(adminID int, res, act string, details map[string]interface{}) {
+		logged = true
+	}
+	updated, err := updateAuthorSrc(7, 3, &model.Author{AuthorName: "updated"})
+	if err != nil || updated.AuthorID != 3 || !logged {
+		t.Fatalf("updateAuthorSrc failed: err=%v author=%+v logged=%v", err, updated, logged)
+	}
+
+	updateAuthorByIDFn = func(authorID int, updated *model.Author) (model.Author, error) {
+		return model.Author{}, uerr.NewError(gorm.ErrRecordNotFound)
+	}
+	_, err = updateAuthorSrc(7, 4, &model.Author{AuthorName: "x"})
+	if !errors.Is(err, errAuthorNotFound) {
+		t.Fatalf("expected errAuthorNotFound on update, got %v", err)
+	}
+
+	deleteAuthorByIDFn = func(authorID int) (model.Author, error) {
+		return model.Author{AuthorID: authorID, AuthorName: "del"}, nil
+	}
+	logged = false
+	err = deleteAuthorSrc(7, 5)
+	if err != nil || !logged {
+		t.Fatalf("deleteAuthorSrc failed: err=%v logged=%v", err, logged)
+	}
+
+	deleteAuthorByIDFn = func(authorID int) (model.Author, error) {
+		return model.Author{}, uerr.NewError(gorm.ErrRecordNotFound)
+	}
+	err = deleteAuthorSrc(7, 6)
+	if !errors.Is(err, errAuthorNotFound) {
+		t.Fatalf("expected errAuthorNotFound on delete, got %v", err)
+	}
+}
+
 func TestWorksSrcPaths(t *testing.T) {
 	backupSrcHooks(t)
 
@@ -249,6 +361,20 @@ func TestWorksSrcPaths(t *testing.T) {
 	works, err = getWorksByAuthorIDSrc(1)
 	if err != nil || len(works) != 1 {
 		t.Fatalf("getWorksByAuthorIDSrc failed: %v, %+v", err, works)
+	}
+
+	queryWorksFn = func(trackID *int, workTitle string, authorName string, offset int, limit int) ([]model.Work, error) {
+		if trackID == nil || *trackID != 1 {
+			t.Fatalf("unexpected trackID input: %+v", trackID)
+		}
+		if workTitle != "w" || authorName != "a" || offset != 2 || limit != 10 {
+			t.Fatalf("unexpected query args: %s %s %d %d", workTitle, authorName, offset, limit)
+		}
+		return []model.Work{{WorkID: 3}}, nil
+	}
+	works, err = queryWorksSrc(func() *int { v := 1; return &v }(), "w", "a", 2, 10)
+	if err != nil || len(works) != 1 || works[0].WorkID != 3 {
+		t.Fatalf("queryWorksSrc failed: %v, %+v", err, works)
 	}
 }
 

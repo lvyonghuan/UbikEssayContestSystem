@@ -22,20 +22,24 @@ var (
 )
 
 // InitRouter
-// @title           作者端API
+// @title          Submission API
 // @version         1.0
-// @description     Ubik 稿件提交系统接口文档
+// @description     Ubik 系统提交接口文档
 // @host            localhost:80
 // @BasePath        /api/v1
 func InitRouter(conf conf.APIConfig) {
-	r := buildSubmissionRouter()
+	r := BuildSubmissionRouter()
 	_ = runServerFn(r, conf.SubmissionsPort)
+}
+
+func BuildSubmissionRouter() *gin.Engine {
+	return buildSubmissionRouter()
 }
 
 func buildSubmissionRouter() *gin.Engine {
 	r := gin.Default()
 
-	// 挂载swagger路由
+	// 鎸傝浇swagger璺敱
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler, ginSwagger.InstanceName("Submission")))
 	v1 := r.Group("/api/v1")
 	{
@@ -48,8 +52,8 @@ func buildSubmissionRouter() *gin.Engine {
 
 			submission := author.Group("/submission")
 			{
-				submission.GET("/:id", checkAccessToken, getSubmissions)
-				submission.POST("/file", checkAccessToken, saveSubmissionFile)
+				submission.GET("", checkAccessToken, getSubmissions)
+				submission.POST("/file", checkAccessToken, saveSubmissionFile) //FIXME 上传文档完整性校验？大小限制？或者上传速率限制？
 				submission.POST("", checkAccessToken, checkWorkSubmissionValid, submissionWork)
 				submission.PUT("", checkAccessToken, checkWorkSubmissionValid, updateSubmission)
 				submission.DELETE("", checkAccessToken, checkWorkSubmissionValid, deleteSubmission)
@@ -90,11 +94,7 @@ func checkWorkSubmissionValid(c *gin.Context) {
 		return
 	}
 
-	if work.AuthorID != c.GetInt("author_token_id") {
-		response.RespError(c, 403, "Forbidden")
-		c.Abort()
-		return
-	}
+	work.AuthorID = c.GetInt("author_token_id") // 从token中获取作者ID，确保提交的作品与当前登录的作者关联
 
 	c.Set("work", work)
 	c.Next()

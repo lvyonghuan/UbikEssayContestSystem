@@ -15,7 +15,7 @@ const docTemplateGlobalInfo = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/contests/": {
+        "/contests": {
             "get": {
                 "description": "获取系统中所有的赛事列表，包括基本信息如赛事ID、名称、状态等",
                 "consumes": [
@@ -28,6 +28,15 @@ const docTemplateGlobalInfo = `{
                     "Contests"
                 ],
                 "summary": "获取赛事列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer {access_token}",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "成功反回赛事列表",
@@ -42,8 +51,110 @@ const docTemplateGlobalInfo = `{
                                         "msg": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/model.Track"
+                                                "$ref": "#/definitions/model.Contest"
                                             }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/contests/{contest_id}": {
+            "get": {
+                "description": "获取指定赛事详情，包括基础信息与时间范围",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Contests"
+                ],
+                "summary": "获取赛事详情",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer {access_token}",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "赛事ID",
+                        "name": "contest_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "成功返回赛事详情",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/model.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "msg": {
+                                            "$ref": "#/definitions/model.Contest"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/tracks/detail/{track_id}": {
+            "get": {
+                "description": "获取指定赛道的详细信息",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tracks"
+                ],
+                "summary": "获取赛道详情",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer {access_token}",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "赛道ID",
+                        "name": "track_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "成功返回赛道详情",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/model.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "msg": {
+                                            "$ref": "#/definitions/model.Track"
                                         }
                                     }
                                 }
@@ -67,6 +178,13 @@ const docTemplateGlobalInfo = `{
                 ],
                 "summary": "获取赛道列表",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer {access_token}",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
                     {
                         "type": "integer",
                         "description": "赛事ID",
@@ -102,6 +220,30 @@ const docTemplateGlobalInfo = `{
         }
     },
     "definitions": {
+        "model.Contest": {
+            "type": "object",
+            "properties": {
+                "contestEndDate": {
+                    "description": "比赛结束日期，精确到分",
+                    "type": "string"
+                },
+                "contestID": {
+                    "type": "integer"
+                },
+                "contestIntroduction": {
+                    "description": "比赛简介",
+                    "type": "string"
+                },
+                "contestName": {
+                    "description": "比赛名称",
+                    "type": "string"
+                },
+                "contestStartDate": {
+                    "description": "比赛开始日期，精确到分",
+                    "type": "string"
+                }
+            }
+        },
         "model.Response": {
             "type": "object",
             "properties": {

@@ -21,7 +21,10 @@ func TestSubmissionWorkSrcWithHookPatch(t *testing.T) {
 		now := time.Now().Unix()
 		return now - 100, now + 100, nil
 	}
-	countWorksByAuthorAndTrackFn = func(authorID int, trackID int) (int64, error) {
+	getTrackByIDFn = func(trackID int) (model.Track, error) {
+		return model.Track{TrackID: trackID, ContestID: 42}, nil
+	}
+	countWorksByAuthorAndContestFn = func(authorID int, contestID int) (int64, error) {
 		return 2, nil
 	}
 	resolveFlowForExecutionFn = func(scope string, eventKey string, targetType string, targetID int) (model.ScriptFlow, []pgsql.ResolvedFlowStep, error) {
@@ -73,7 +76,10 @@ func TestSubmissionWorkSrcBlockedByHook(t *testing.T) {
 		now := time.Now().Unix()
 		return now - 100, now + 100, nil
 	}
-	countWorksByAuthorAndTrackFn = func(authorID int, trackID int) (int64, error) { return 0, nil }
+	getTrackByIDFn = func(trackID int) (model.Track, error) {
+		return model.Track{TrackID: trackID, ContestID: 42}, nil
+	}
+	countWorksByAuthorAndContestFn = func(authorID int, contestID int) (int64, error) { return 0, nil }
 	resolveFlowForExecutionFn = func(scope string, eventKey string, targetType string, targetID int) (model.ScriptFlow, []pgsql.ResolvedFlowStep, error) {
 		return model.ScriptFlow{FlowID: 1, FlowKey: "flow"}, []pgsql.ResolvedFlowStep{{
 			Step:    model.FlowStep{StepID: 1, StepName: "deny", TimeoutMs: 1000, FailureStrategy: "fail_close"},
@@ -170,8 +176,8 @@ func TestCheckSubmissionTimeValid(t *testing.T) {
 func TestAuthorLoginAndUpdateAuthorErrorPaths(t *testing.T) {
 	setupSubmissionRouteMocks(t)
 
-	getAuthorByAuthorIDFn = func(author *model.Author) error { return errors.New("query failed") }
-	if _, err := authorLoginSrc(&model.Author{AuthorID: 1, Password: "x"}); err == nil {
+	getAuthorByAuthorNameFn = func(author *model.Author) error { return errors.New("query failed") }
+	if _, err := authorLoginSrc(&model.Author{AuthorName: "demo", Password: "x"}); err == nil {
 		t.Fatal("authorLoginSrc should fail when querying author fails")
 	}
 
