@@ -25,6 +25,22 @@ const detailDrawerVisible = ref(false)
 const detailLoading = ref(false)
 const currentWork = ref<Work | null>(null)
 
+const statusTextMap: Record<string, string> = {
+  submission_success: '投稿成功',
+  pending: '待审核',
+  reviewing: '评审中',
+  approved: '已通过',
+  rejected: '已驳回',
+}
+
+const statusTagTypeMap: Record<string, 'success' | 'warning' | 'danger' | 'info'> = {
+  submission_success: 'success',
+  pending: 'warning',
+  reviewing: 'info',
+  approved: 'success',
+  rejected: 'danger',
+}
+
 function parsePositiveInteger(text: string, label: string, allowEmpty = false) {
   if (allowEmpty && !text.trim()) {
     return null
@@ -44,6 +60,48 @@ function parseNonNegativeInteger(text: string, label: string) {
     return null
   }
   return parsed
+}
+
+function normalizeStatusValue(value: unknown) {
+  if (typeof value !== 'string') {
+    return ''
+  }
+  return value.trim()
+}
+
+function resolveWorkStatus(work: Work) {
+  const direct = normalizeStatusValue(work.workStatus)
+  if (direct) {
+    return direct
+  }
+
+  const fromInfosWorkStatus = normalizeStatusValue(work.workInfos?.['workStatus'])
+  if (fromInfosWorkStatus) {
+    return fromInfosWorkStatus
+  }
+
+  const fromInfosSnakeCase = normalizeStatusValue(work.workInfos?.['work_status'])
+  if (fromInfosSnakeCase) {
+    return fromInfosSnakeCase
+  }
+
+  return normalizeStatusValue(work.workInfos?.['status'])
+}
+
+function workStatusText(work: Work) {
+  const status = resolveWorkStatus(work)
+  if (!status) {
+    return '-'
+  }
+  return statusTextMap[status] || status
+}
+
+function workStatusTagType(work: Work) {
+  const status = resolveWorkStatus(work)
+  if (!status) {
+    return 'info'
+  }
+  return statusTagTypeMap[status] || 'info'
 }
 
 async function queryWorks() {
@@ -183,6 +241,11 @@ async function downloadFile(workId: number | undefined) {
         </template>
       </el-table-column>
       <el-table-column prop="workID" label="作品ID" width="100" />
+      <el-table-column label="状态" width="130">
+        <template #default="scope">
+          <el-tag :type="workStatusTagType(scope.row)">{{ workStatusText(scope.row) }}</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="220">
         <template #default="scope">
           <el-space>

@@ -28,7 +28,8 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		`CREATE TABLE admin_roles (admin_id INTEGER NOT NULL, role_id INTEGER NOT NULL, PRIMARY KEY (admin_id, role_id));`,
 		`CREATE TABLE contests (contest_id INTEGER PRIMARY KEY AUTOINCREMENT, contest_name TEXT, contest_start_date TIMESTAMP, contest_end_date TIMESTAMP, contest_introduction TEXT);`,
 		`CREATE TABLE tracks (track_id INTEGER PRIMARY KEY AUTOINCREMENT, track_name TEXT, contest_id INTEGER, track_description TEXT, track_settings TEXT);`,
-		`CREATE TABLE works (work_id INTEGER PRIMARY KEY AUTOINCREMENT, work_title TEXT, track_id INTEGER, author_id INTEGER, work_infos TEXT);`,
+		`CREATE TABLE works (work_id INTEGER PRIMARY KEY AUTOINCREMENT, work_title TEXT, track_id INTEGER, author_id INTEGER, work_status TEXT DEFAULT 'submission_success', work_infos TEXT);`,
+		`CREATE TABLE review_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT, track_id INTEGER, event_name TEXT, work_status TEXT DEFAULT 'reviewing', start_time TIMESTAMP, end_time TIMESTAMP, judge_ids TEXT);`,
 		`CREATE TABLE script_definitions (script_id INTEGER PRIMARY KEY AUTOINCREMENT, script_key TEXT UNIQUE, script_name TEXT, interpreter TEXT, description TEXT, is_enabled BOOLEAN, meta TEXT, created_at DATETIME, updated_at DATETIME);`,
 		`CREATE TABLE script_versions (version_id INTEGER PRIMARY KEY AUTOINCREMENT, script_id INTEGER NOT NULL, version_num INTEGER NOT NULL, file_name TEXT NOT NULL, relative_path TEXT NOT NULL, checksum TEXT, is_active BOOLEAN, created_by INTEGER, created_at DATETIME, UNIQUE(script_id, version_num));`,
 		`CREATE TABLE script_flows (flow_id INTEGER PRIMARY KEY AUTOINCREMENT, flow_key TEXT UNIQUE, flow_name TEXT, description TEXT, is_enabled BOOLEAN, meta TEXT, created_at DATETIME, updated_at DATETIME);`,
@@ -115,7 +116,7 @@ func TestAdminAndSubmissionFunctions(t *testing.T) {
 		t.Fatalf("CreateActionLog failed: %v", err)
 	}
 
-	work := &model.Work{WorkTitle: "Work A", TrackID: track.TrackID, AuthorID: 1}
+	work := &model.Work{WorkTitle: "Work A", TrackID: track.TrackID, AuthorID: 1, WorkStatus: "submission_success"}
 	if err := SubmissionWork(work); err != nil {
 		t.Fatalf("SubmissionWork failed: %v", err)
 	}
@@ -152,6 +153,9 @@ func TestAdminAndSubmissionFunctions(t *testing.T) {
 	}
 	if queryWorks[0].AuthorName != "author_a" || queryWorks[0].TrackName == "" {
 		t.Fatalf("QueryWorks should return authorName and trackName, got %+v", queryWorks[0])
+	}
+	if queryWorks[0].WorkStatus != "submission_success" {
+		t.Fatalf("QueryWorks should return work status, got %+v", queryWorks[0])
 	}
 
 	work.WorkTitle = "Work Updated"

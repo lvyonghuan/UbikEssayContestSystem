@@ -31,6 +31,7 @@ CREATE TABLE works (
     work_title VARCHAR(255) NOT NULL,
     track_id INT,
     author_id INT,
+    work_status VARCHAR(128) NOT NULL DEFAULT 'submission_success',
     work_infos JSONB,
     FOREIGN KEY (track_id) REFERENCES tracks(track_id) ON DELETE SET NULL,
     FOREIGN KEY (author_id) REFERENCES authors(author_id) ON DELETE CASCADE
@@ -46,6 +47,7 @@ CREATE TABLE review_events (
     event_id SERIAL PRIMARY KEY,
     track_id INT,
     event_name VARCHAR(255) NOT NULL,
+    work_status VARCHAR(128) NOT NULL DEFAULT 'reviewing',
     start_time TIMESTAMP NOT NULL,
     end_time TIMESTAMP NOT NULL,
     judge_ids INT[],

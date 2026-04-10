@@ -179,6 +179,7 @@ export interface Work {
   trackID?: number
   trackName?: string
   workTitle?: string
+  workStatus?: string
   workInfos?: JsonObject
 }
 

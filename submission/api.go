@@ -40,6 +40,7 @@ var (
 	getUploadFilePermissionFn   = redis.GetUploadFilePermission
 	runTrackHookFn              = runTrackHook
 	patchWorkInfosFn            = pgsql.PatchWorkInfos
+	updateWorkStatusFn          = pgsql.UpdateWorkStatus
 	resolveSubmissionFilePathFn = resolveSubmissionFilePath
 	computeFileSHA256Fn         = computeFileSHA256
 
@@ -369,6 +370,10 @@ func saveSubmissionFile(c *gin.Context) {
 			response.RespError(c, 500, err.Error())
 			return
 		}
+		if err := applyPersistedWorkStatusPatch(workIDInt, preHookResult.Patch); err != nil {
+			response.RespError(c, 500, err.Error())
+			return
+		}
 	}
 
 	dstDir := filepath.Join(_const.FileRootPath, strconv.Itoa(trackID), strconv.Itoa(authorID))
@@ -455,6 +460,10 @@ func saveSubmissionFile(c *gin.Context) {
 	}
 	if len(postHookResult.Patch) > 0 {
 		if err := patchWorkInfosFn(workIDInt, postHookResult.Patch); err != nil {
+			response.RespError(c, 500, err.Error())
+			return
+		}
+		if err := applyPersistedWorkStatusPatch(workIDInt, postHookResult.Patch); err != nil {
 			response.RespError(c, 500, err.Error())
 			return
 		}
@@ -625,6 +634,19 @@ func normalizeSHA256Hex(value string) (string, error) {
 		return "", errors.New("bad request: file_hash must be 64 hex characters")
 	}
 	return hash, nil
+}
+
+func applyPersistedWorkStatusPatch(workID int, patch map[string]any) error {
+	status, ok := extractWorkStatusFromPatch(patch)
+	if !ok {
+		return nil
+	}
+
+	if err := updateWorkStatusFn(workID, status); err != nil {
+		return uerr.ExtractError(err)
+	}
+
+	return nil
 }
 
 func isSubmissionNotFoundError(err error) bool {

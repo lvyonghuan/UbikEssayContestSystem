@@ -14,6 +14,7 @@ type Work struct {
 	WorkTitle  string         `json:"workTitle"`
 	TrackID    int            `json:"trackID"`
 	AuthorID   int            `json:"authorID"`
+	WorkStatus string         `gorm:"column:work_status" json:"workStatus"`
 	AuthorName string         `gorm:"column:author_name;->" json:"authorName,omitempty"`
 	TrackName  string         `gorm:"column:track_name;->" json:"trackName,omitempty"`
 	WorkInfos  map[string]any `gorm:"type:jsonb;serializer:json" json:"workInfos"`

@@ -66,6 +66,7 @@ func backupSubmissionHooks(t *testing.T) {
 	origGetUploadFilePermissionFn := getUploadFilePermissionFn
 	origRunTrackHookFn := runTrackHookFn
 	origPatchWorkInfosFn := patchWorkInfosFn
+	origUpdateWorkStatusFn := updateWorkStatusFn
 	origGetSubmissionByWorkIDFn := getSubmissionByWorkIDFn
 	origResolveSubmissionFilePathFn := resolveSubmissionFilePathFn
 	origComputeFileSHA256Fn := computeFileSHA256Fn
@@ -107,6 +108,7 @@ func backupSubmissionHooks(t *testing.T) {
 		getUploadFilePermissionFn = origGetUploadFilePermissionFn
 		runTrackHookFn = origRunTrackHookFn
 		patchWorkInfosFn = origPatchWorkInfosFn
+		updateWorkStatusFn = origUpdateWorkStatusFn
 		getSubmissionByWorkIDFn = origGetSubmissionByWorkIDFn
 		resolveSubmissionFilePathFn = origResolveSubmissionFilePathFn
 		computeFileSHA256Fn = origComputeFileSHA256Fn
@@ -247,6 +249,7 @@ func setupSubmissionRouteMocks(t *testing.T) {
 		return scriptflow.ChainResult{Allowed: true}, nil
 	}
 	patchWorkInfosFn = func(workID int, patch map[string]any) error { return nil }
+	updateWorkStatusFn = func(workID int, status string) error { return nil }
 	getSubmissionByWorkIDFn = func(work *model.Work) error {
 		switch work.WorkID {
 		case 404:
@@ -352,6 +355,44 @@ func TestSubmissionRoutesSmokeSuccess(t *testing.T) {
 	}
 }
 
+func TestSubmissionWorkResponseContainsWorkStatus(t *testing.T) {
+	setupSubmissionRouteMocks(t)
+	router := buildSubmissionRouter()
+
+	submissionWorkSrcFn = func(work *model.Work) error {
+		work.WorkID = 77
+		work.WorkStatus = "submission_success"
+		return nil
+	}
+
+	w := doJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/v1/author/submission",
+		"Bearer author",
+		[]byte(`{"authorID":1,"trackID":2,"workTitle":"w"}`),
+	)
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected http status: %d", w.Code)
+	}
+
+	var resp struct {
+		Code int `json:"code"`
+		Msg  struct {
+			WorkStatus string `json:"workStatus"`
+		} `json:"msg"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal failed: %v body=%s", err, w.Body.String())
+	}
+	if resp.Code != 200 {
+		t.Fatalf("unexpected business code: %d", resp.Code)
+	}
+	if resp.Msg.WorkStatus != "submission_success" {
+		t.Fatalf("expected workStatus in response, got %q", resp.Msg.WorkStatus)
+	}
+}
+
 func TestSaveSubmissionFileDocConversionAndPatch(t *testing.T) {
 	setupSubmissionRouteMocks(t)
 
@@ -402,6 +443,54 @@ func TestSaveSubmissionFileDocConversionAndPatch(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "submissions", "2", "1", "11.doc")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("temp doc should be removed, stat err=%v", err)
+	}
+}
+
+func TestSaveSubmissionFilePatchCanUpdateWorkStatus(t *testing.T) {
+	setupSubmissionRouteMocks(t)
+
+	wd, _ := os.Getwd()
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+
+	statusUpdates := make([]string, 0, 2)
+	updateWorkStatusFn = func(workID int, status string) error {
+		if workID != 12 {
+			t.Fatalf("unexpected workID for update status: %d", workID)
+		}
+		statusUpdates = append(statusUpdates, status)
+		return nil
+	}
+	runTrackHookFn = func(scope string, eventKey string, trackID int, payload map[string]any) (scriptflow.ChainResult, error) {
+		if eventKey == scriptflow.EventFilePre {
+			return scriptflow.ChainResult{Allowed: true, Patch: map[string]any{"workStatus": "reviewing"}}, nil
+		}
+		if eventKey == scriptflow.EventFilePost {
+			return scriptflow.ChainResult{Allowed: true, Patch: map[string]any{"work_status": "approved"}}, nil
+		}
+		return scriptflow.ChainResult{Allowed: true}, nil
+	}
+
+	router := buildSubmissionRouter()
+	w := doMultipartRequest(
+		router,
+		"/api/v1/author/submission/file",
+		"Bearer author",
+		map[string]string{"work_id": "12"},
+		"article_file",
+		"paper.docx",
+		[]byte("docx-content"),
+	)
+	if code := decodeRespCode(t, w.Body.Bytes()); code != 200 {
+		t.Fatalf("upload docx should success, got code=%d body=%s", code, w.Body.String())
+	}
+
+	if len(statusUpdates) != 2 {
+		t.Fatalf("expected 2 status updates from hooks, got %d", len(statusUpdates))
+	}
+	if statusUpdates[0] != "reviewing" || statusUpdates[1] != "approved" {
+		t.Fatalf("unexpected status updates: %+v", statusUpdates)
 	}
 }
 

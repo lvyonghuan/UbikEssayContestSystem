@@ -141,6 +141,7 @@ describe('repositories with mock api', () => {
     const workId = worksByTrack[0].workID as number
     const detail = await fetchWorkByID(workId)
     expect(detail.workID).toBe(workId)
+    expect(typeof detail.workStatus === 'string' && detail.workStatus.length > 0).toBe(true)
 
     await removeWork(workId)
     const worksAfterDelete = await fetchWorks({ trackID: 101, limit: 100 })

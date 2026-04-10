@@ -21,6 +21,10 @@ import (
 	"github.com/lvyonghuan/Ubik-Util/uerr"
 )
 
+const (
+	defaultSubmissionWorkStatus = "submission_success"
+)
+
 var (
 	getAuthorByAuthorNameFn        = pgsql.GetAuthorByAuthorName
 	createAuthorFn                 = pgsql.CreateAuthor
@@ -155,11 +159,17 @@ func submissionWorkSrc(work *model.Work) error {
 		return errors.New("submission blocked by script flow")
 	}
 
+	ensureDefaultWorkStatus(work)
+
 	return performWorkOperationWithPermission(work, submissionWorkFn, "Submission work")
 }
 
 func updateSubmissionSrc(work *model.Work) error {
 	if err := checkSubmissionTimeValid(work.TrackID); err != nil {
+		return err
+	}
+
+	if err := hydrateWorkStatusForUpdate(work); err != nil {
 		return err
 	}
 
@@ -182,6 +192,10 @@ func updateSubmissionSrc(work *model.Work) error {
 	}
 	if !allowed {
 		return errors.New("submission update blocked by script flow")
+	}
+
+	if strings.TrimSpace(work.WorkStatus) == "" {
+		ensureDefaultWorkStatus(work)
 	}
 
 	return performWorkOperationWithPermission(work, updateWorkFn, "Update submission")
@@ -262,6 +276,9 @@ func checkHookAllowedAndApplyPatch(scope string, eventKey string, trackID int, w
 		return false, errors.New("submission " + blockedMessageKey + " blocked by script flow")
 	}
 	mergeWorkInfos(work, hookResult.Patch)
+	if patchedStatus, ok := extractWorkStatusFromPatch(hookResult.Patch); ok {
+		setWorkStatus(work, patchedStatus)
+	}
 	return true, nil
 }
 
@@ -356,12 +373,84 @@ func toWorkMap(work model.Work) map[string]any {
 		infos[k] = v
 	}
 	return map[string]any{
-		"workID":    work.WorkID,
-		"workTitle": work.WorkTitle,
-		"trackID":   work.TrackID,
-		"authorID":  work.AuthorID,
-		"workInfos": infos,
+		"workID":     work.WorkID,
+		"workTitle":  work.WorkTitle,
+		"trackID":    work.TrackID,
+		"authorID":   work.AuthorID,
+		"workStatus": work.WorkStatus,
+		"workInfos":  infos,
 	}
+}
+
+func hydrateWorkStatusForUpdate(work *model.Work) error {
+	if strings.TrimSpace(work.WorkStatus) != "" || work.WorkID <= 0 {
+		return nil
+	}
+
+	existing := model.Work{WorkID: work.WorkID}
+	if err := getSubmissionByWorkIDFn(&existing); err != nil {
+		log.Logger.Warn("Get submission by work id failed when hydrating status: " + err.Error())
+		return uerr.ExtractError(err)
+	}
+
+	if strings.TrimSpace(existing.WorkStatus) == "" {
+		ensureDefaultWorkStatus(work)
+		return nil
+	}
+
+	setWorkStatus(work, existing.WorkStatus)
+	return nil
+}
+
+func ensureDefaultWorkStatus(work *model.Work) {
+	if strings.TrimSpace(work.WorkStatus) == "" {
+		setWorkStatus(work, defaultSubmissionWorkStatus)
+		return
+	}
+
+	setWorkStatus(work, work.WorkStatus)
+}
+
+func setWorkStatus(work *model.Work, status string) {
+	normalized := strings.TrimSpace(status)
+	if normalized == "" {
+		return
+	}
+	work.WorkStatus = normalized
+	if work.WorkInfos == nil {
+		work.WorkInfos = map[string]any{}
+	}
+	work.WorkInfos["workStatus"] = normalized
+	work.WorkInfos["status"] = normalized
+}
+
+func extractWorkStatusFromPatch(patch map[string]any) (string, bool) {
+	if len(patch) == 0 {
+		return "", false
+	}
+
+	for _, key := range []string{"workStatus", "work_status", "status"} {
+		if value, ok := patch[key]; ok {
+			if status, ok := normalizeStatusValue(value); ok {
+				return status, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+func normalizeStatusValue(value any) (string, bool) {
+	status, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	normalized := strings.TrimSpace(status)
+	if normalized == "" {
+		return "", false
+	}
+
+	return normalized, true
 }
 
 func removeSubmissionFiles(work model.Work) error {

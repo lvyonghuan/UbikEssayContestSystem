@@ -348,6 +348,7 @@ export const mockWorksByTrack: Record<number, Work[]> = {
       trackID: 101,
       trackName: '硬核科幻',
       workTitle: '流浪火种',
+      workStatus: '待审核',
       workInfos: {
         status: '待审核',
         submittedAt: '2026-04-03 14:10',
@@ -361,6 +362,7 @@ export const mockWorksByTrack: Record<number, Work[]> = {
       trackID: 101,
       trackName: '硬核科幻',
       workTitle: '重力尽头',
+      workStatus: '已通过',
       workInfos: {
         status: '已通过',
         submittedAt: '2026-04-05 10:22',
@@ -376,6 +378,7 @@ export const mockWorksByTrack: Record<number, Work[]> = {
       trackID: 102,
       trackName: '太空歌剧',
       workTitle: '星门巡礼',
+      workStatus: '待审核',
       workInfos: {
         status: '待审核',
         submittedAt: '2026-04-06 09:16',
@@ -391,6 +394,7 @@ export const mockWorksByTrack: Record<number, Work[]> = {
       trackID: 201,
       trackName: '密室推理',
       workTitle: '七号密室',
+      workStatus: '已驳回',
       workInfos: {
         status: '已驳回',
         submittedAt: '2026-04-04 19:45',
@@ -404,6 +408,7 @@ export const mockWorksByTrack: Record<number, Work[]> = {
       trackID: 201,
       trackName: '密室推理',
       workTitle: '黑伞谋杀案',
+      workStatus: '待审核',
       workInfos: {
         status: '待审核',
         submittedAt: '2026-04-07 16:00',

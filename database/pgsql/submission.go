@@ -60,7 +60,7 @@ func QueryWorks(trackID *int, workTitle string, authorName string, offset int, l
 	var works []model.Work
 
 	query := postgresDB.Table("works").
-		Select("works.work_id", "works.work_title", "works.track_id", "works.author_id", "works.work_infos", "authors.author_name", "tracks.track_name").
+		Select("works.work_id", "works.work_title", "works.track_id", "works.author_id", "works.work_status", "works.work_infos", "authors.author_name", "tracks.track_name").
 		Joins("LEFT JOIN authors ON authors.author_id = works.author_id").
 		Joins("LEFT JOIN tracks ON tracks.track_id = works.track_id")
 
@@ -156,6 +156,17 @@ func PatchWorkInfos(workID int, patch map[string]any) error {
 	err = postgresDB.Model(&model.Work{}).
 		Where("work_id = ?", workID).
 		Update("work_infos", datatypes.JSONMap(work.WorkInfos)).Error
+	if err != nil {
+		return uerr.NewError(err)
+	}
+
+	return nil
+}
+
+func UpdateWorkStatus(workID int, status string) error {
+	err := postgresDB.Model(&model.Work{}).
+		Where("work_id = ?", workID).
+		Update("work_status", status).Error
 	if err != nil {
 		return uerr.NewError(err)
 	}
