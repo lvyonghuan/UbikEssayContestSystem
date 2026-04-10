@@ -88,10 +88,14 @@ export interface DashboardSummary {
 
 export interface ScriptDefinition {
   scriptID?: number
+  scriptKey?: string
   scriptName: string
+  description?: string
   scriptDescription?: string
+  interpreter?: string
   isEnabled?: boolean
   activeVersionID?: number
+  meta?: JsonObject
   extensionData?: JsonObject
   createdAt?: string
   updatedAt?: string
@@ -100,10 +104,14 @@ export interface ScriptDefinition {
 export interface ScriptVersion {
   versionID?: number
   scriptID?: number
+  versionNum?: number
   versionName?: string
   fileName?: string
+  relativePath?: string
   fileURL?: string
+  checksum?: string
   fileHash?: string
+  createdBy?: number
   isActive?: boolean
   extensionData?: JsonObject
   createdAt?: string
@@ -115,13 +123,18 @@ export interface ScriptDefinitionStatusPayload {
 
 export interface ScriptFlow {
   flowID?: number
+  flowKey?: string
   flowName: string
+  description?: string
   flowDescription?: string
   isEnabled?: boolean
+  meta?: JsonObject
   extensionData?: JsonObject
   createdAt?: string
   updatedAt?: string
 }
+
+export type FlowFailureStrategy = 'CONTINUE' | 'STOP' | 'RETRY'
 
 export interface FlowStep {
   stepID?: number
@@ -129,15 +142,27 @@ export interface FlowStep {
   stepOrder: number
   stepName?: string
   scriptID?: number
+  scriptVersionID?: number
+  isEnabled?: boolean
+  failureStrategy?: FlowFailureStrategy | string
+  inputTemplate?: JsonObject
+  timeoutMs?: number
   stepConfig?: JsonObject
   extensionData?: JsonObject
 }
 
+export type FlowMountScope = 'global' | 'contest' | 'track'
+
 export interface FlowMount {
   mountID?: number
   flowID?: number
-  containerType: string
-  containerID: number
+  scope?: FlowMountScope | string
+  targetType?: string
+  targetID?: number
+  eventKey?: string
+  isEnabled?: boolean
+  containerType?: string
+  containerID?: number
   mountConfig?: JsonObject
   extensionData?: JsonObject
   createdAt?: string

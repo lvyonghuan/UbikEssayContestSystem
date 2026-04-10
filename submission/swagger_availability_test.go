@@ -44,6 +44,7 @@ func TestSwaggerDeclaredAPIsAreReachable(t *testing.T) {
 		"/author",
 		"/author/submission",
 		"/author/submission/file",
+		"/author/submission/file/{submission_id}",
 	}
 	for _, p := range requiredPaths {
 		if _, ok := doc.Paths[p]; !ok {
@@ -51,7 +52,9 @@ func TestSwaggerDeclaredAPIsAreReachable(t *testing.T) {
 		}
 	}
 
-	replacer := strings.NewReplacer()
+	replacer := strings.NewReplacer(
+		"{submission_id}", "10",
+	)
 	for path, methods := range doc.Paths {
 		for method := range methods {
 			httpMethod := strings.ToUpper(method)
@@ -89,6 +92,17 @@ func TestSwaggerDeclaredAPIsAreReachable(t *testing.T) {
 				}
 				if code := decodeRespCode(t, w.Body.Bytes()); code == 404 {
 					t.Fatalf("swagger path is not reachable: %s %s", httpMethod, requestPath)
+				}
+				continue
+			}
+
+			if strings.HasPrefix(requestPath, "/api/v1/author/submission/file/") && httpMethod == http.MethodGet {
+				w := doJSONRequest(router, httpMethod, requestPath, auth, nil)
+				if w.Code != http.StatusOK {
+					t.Fatalf("unexpected http status for %s %s: %d", httpMethod, requestPath, w.Code)
+				}
+				if len(w.Body.Bytes()) == 0 {
+					t.Fatalf("expected file response for %s %s", httpMethod, requestPath)
 				}
 				continue
 			}

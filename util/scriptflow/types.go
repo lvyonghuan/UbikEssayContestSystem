@@ -14,6 +14,7 @@ const (
 	EventSubmissionDeletePre = "submission_delete_pre"
 	EventFilePre             = "file_pre"
 	EventFilePost            = "file_post"
+	EventContestEnd          = "contest_end"
 )
 
 type ExecuteInput struct {

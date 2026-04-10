@@ -1,6 +1,10 @@
 package submission
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io"
 	"main/database/pgsql"
 	"main/database/redis"
 	"main/model"
@@ -32,9 +36,12 @@ var (
 	updateSubmissionSrcFn       = updateSubmissionSrc
 	deleteSubmissionSrcFn       = deleteSubmissionSrc
 
-	getUploadFilePermissionFn = redis.GetUploadFilePermission
-	runTrackHookFn            = runTrackHook
-	patchWorkInfosFn          = pgsql.PatchWorkInfos
+	getSubmissionByWorkIDFn     = pgsql.GetSubmissionByWorkID
+	getUploadFilePermissionFn   = redis.GetUploadFilePermission
+	runTrackHookFn              = runTrackHook
+	patchWorkInfosFn            = pgsql.PatchWorkInfos
+	resolveSubmissionFilePathFn = resolveSubmissionFilePath
+	computeFileSHA256Fn         = computeFileSHA256
 
 	newDocumentConverterFn = func() document.Converter {
 		return document.NewLibreOfficeConverter("", "", 60*time.Second)
@@ -154,6 +161,13 @@ func updateAuthor(c *gin.Context) {
 		response.RespError(c, 400, "bad request")
 		return
 	}
+
+	tokenAuthorID := c.GetInt("author_token_id")
+	if author.AuthorID != 0 && author.AuthorID != tokenAuthorID {
+		response.RespError(c, 403, "forbidden: can only update your own profile")
+		return
+	}
+	author.AuthorID = tokenAuthorID
 
 	err = updateAuthorSrcFn(&author)
 	if err != nil {
@@ -286,6 +300,7 @@ func deleteSubmission(c *gin.Context) {
 // @Param Authorization header string true "Bearer {access_token}"
 // @Param work_id formData int true "作品ID"
 // @Param article_file formData file true "提交文件"
+// @Param file_hash formData string true "提交文件 SHA-256（64位十六进制）"
 // @Success 200 {object} model.Response "上传成功"
 // @Router /author/submission/file [post]
 func saveSubmissionFile(c *gin.Context) {
@@ -316,6 +331,12 @@ func saveSubmissionFile(c *gin.Context) {
 		return
 	}
 
+	clientFileHash, err := normalizeSHA256Hex(c.PostForm("file_hash"))
+	if err != nil {
+		response.RespError(c, 400, err.Error())
+		return
+	}
+
 	preHookResult, err := runTrackHookFn(
 		scriptflow.ScopeSubmission,
 		scriptflow.EventFilePre,
@@ -328,6 +349,7 @@ func saveSubmissionFile(c *gin.Context) {
 			"fileName":   fileOrigin.Filename,
 			"fileSize":   fileOrigin.Size,
 			"fileSuffix": suffix,
+			"fileHash":   clientFileHash,
 		},
 	)
 	if err != nil {
@@ -384,6 +406,26 @@ func saveSubmissionFile(c *gin.Context) {
 		}
 	}
 
+	actualFileHash, actualFileSize, err := computeFileSHA256Fn(finalDocxPath)
+	if err != nil {
+		response.RespError(c, 500, err.Error())
+		return
+	}
+	if actualFileHash != clientFileHash {
+		_ = os.Remove(finalDocxPath)
+		response.RespError(c, 400, "bad request: file hash mismatch")
+		return
+	}
+
+	if err := patchWorkInfosFn(workIDInt, map[string]any{
+		"file_hash_sha256": actualFileHash,
+		"file_size_bytes":  actualFileSize,
+		"file_uploaded_at": time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		response.RespError(c, 500, err.Error())
+		return
+	}
+
 	postHookResult, err := runTrackHookFn(
 		scriptflow.ScopeSubmission,
 		scriptflow.EventFilePost,
@@ -395,6 +437,8 @@ func saveSubmissionFile(c *gin.Context) {
 			"trackID":     trackID,
 			"savedPath":   filepath.ToSlash(finalDocxPath),
 			"savedSuffix": ".docx",
+			"fileHash":    actualFileHash,
+			"fileSize":    actualFileSize,
 		},
 	)
 	if err != nil {
@@ -417,6 +461,57 @@ func saveSubmissionFile(c *gin.Context) {
 	}
 
 	response.RespSuccess(c, nil)
+}
+
+// @Summary 下载提交文件
+// @Description 下载当前作者自己的投稿文件
+// @Tags 作者端
+// @Accept application/json
+// @Produce application/octet-stream
+// @Param Authorization header string true "Bearer {access_token}"
+// @Param submission_id path int true "投稿ID(work_id)"
+// @Success 200 {file} file "投稿文件"
+// @Router /author/submission/file/{submission_id} [get]
+func getSubmissionFile(c *gin.Context) {
+	submissionID, err := strconv.Atoi(c.Param("submission_id"))
+	if err != nil || submissionID <= 0 {
+		response.RespError(c, 400, "bad request")
+		return
+	}
+
+	work := model.Work{WorkID: submissionID}
+	if err := getSubmissionByWorkIDFn(&work); err != nil {
+		if isSubmissionNotFoundError(err) {
+			response.RespError(c, 404, "submission not found")
+			return
+		}
+		response.RespError(c, 500, uerr.ExtractError(err).Error())
+		return
+	}
+
+	if work.AuthorID != c.GetInt("author_token_id") {
+		response.RespError(c, 403, "forbidden: can only access your own submissions")
+		return
+	}
+
+	filePath, err := resolveSubmissionFilePathFn(work)
+	if err != nil {
+		if isSubmissionNotFoundError(err) {
+			response.RespError(c, 404, "submission file not found")
+			return
+		}
+		response.RespError(c, 500, err.Error())
+		return
+	}
+
+	fileHash, _, err := computeFileSHA256Fn(filePath)
+	if err != nil {
+		response.RespError(c, 500, err.Error())
+		return
+	}
+
+	c.Header("X-File-SHA256", fileHash)
+	c.FileAttachment(filePath, filepath.Base(filePath))
 }
 
 func cleanupSubmissionFileVariants(dstDir string, workID int) error {
@@ -442,4 +537,103 @@ func cleanupSubmissionFileVariants(dstDir string, workID int) error {
 	}
 
 	return nil
+}
+
+func resolveSubmissionFilePath(work model.Work) (string, error) {
+	dstDir := filepath.Join(_const.FileRootPath, strconv.Itoa(work.TrackID), strconv.Itoa(work.AuthorID))
+	entries, err := os.ReadDir(dstDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", os.ErrNotExist
+		}
+		return "", err
+	}
+
+	prefix := strconv.Itoa(work.WorkID) + "."
+	selectedName := ""
+	selectedTime := time.Time{}
+	hasDocx := false
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			continue
+		}
+
+		ext := strings.ToLower(filepath.Ext(name))
+		isDocx := ext == ".docx"
+
+		if isDocx {
+			if !hasDocx || selectedName == "" || info.ModTime().After(selectedTime) {
+				hasDocx = true
+				selectedName = name
+				selectedTime = info.ModTime()
+			}
+			continue
+		}
+
+		if hasDocx {
+			continue
+		}
+
+		if selectedName == "" || info.ModTime().After(selectedTime) {
+			selectedName = name
+			selectedTime = info.ModTime()
+		}
+	}
+
+	if selectedName == "" {
+		return "", os.ErrNotExist
+	}
+
+	return filepath.Join(dstDir, selectedName), nil
+}
+
+func computeFileSHA256(filePath string) (string, int64, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", 0, err
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+
+	hashBuilder := sha256.New()
+	size, err := io.Copy(hashBuilder, file)
+	if err != nil {
+		return "", 0, err
+	}
+
+	return hex.EncodeToString(hashBuilder.Sum(nil)), size, nil
+}
+
+func normalizeSHA256Hex(value string) (string, error) {
+	hash := strings.ToLower(strings.TrimSpace(value))
+	if len(hash) != 64 {
+		return "", errors.New("bad request: file_hash must be 64 hex characters")
+	}
+	if _, err := hex.DecodeString(hash); err != nil {
+		return "", errors.New("bad request: file_hash must be 64 hex characters")
+	}
+	return hash, nil
+}
+
+func isSubmissionNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	text := strings.ToLower(uerr.ExtractError(err).Error())
+	return strings.Contains(text, "record not found") || strings.Contains(text, "not found")
 }

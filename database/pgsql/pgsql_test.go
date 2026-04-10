@@ -9,7 +9,6 @@ import (
 
 	"github.com/glebarez/sqlite"
 
-	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -27,7 +26,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		`CREATE TABLE roles (role_id INTEGER PRIMARY KEY AUTOINCREMENT, role_name TEXT UNIQUE, description TEXT, is_default BOOLEAN, is_super BOOLEAN, meta TEXT);`,
 		`CREATE TABLE role_permissions (role_id INTEGER NOT NULL, permission_id INTEGER NOT NULL, PRIMARY KEY (role_id, permission_id));`,
 		`CREATE TABLE admin_roles (admin_id INTEGER NOT NULL, role_id INTEGER NOT NULL, PRIMARY KEY (admin_id, role_id));`,
-		`CREATE TABLE contests (contest_id INTEGER PRIMARY KEY AUTOINCREMENT, contest_name TEXT, contest_start_date DATE, contest_end_date DATE, contest_introduction TEXT);`,
+		`CREATE TABLE contests (contest_id INTEGER PRIMARY KEY AUTOINCREMENT, contest_name TEXT, contest_start_date TIMESTAMP, contest_end_date TIMESTAMP, contest_introduction TEXT);`,
 		`CREATE TABLE tracks (track_id INTEGER PRIMARY KEY AUTOINCREMENT, track_name TEXT, contest_id INTEGER, track_description TEXT, track_settings TEXT);`,
 		`CREATE TABLE works (work_id INTEGER PRIMARY KEY AUTOINCREMENT, work_title TEXT, track_id INTEGER, author_id INTEGER, work_infos TEXT);`,
 		`CREATE TABLE script_definitions (script_id INTEGER PRIMARY KEY AUTOINCREMENT, script_key TEXT UNIQUE, script_name TEXT, interpreter TEXT, description TEXT, is_enabled BOOLEAN, meta TEXT, created_at DATETIME, updated_at DATETIME);`,
@@ -86,8 +85,8 @@ func TestAdminAndSubmissionFunctions(t *testing.T) {
 
 	contest := &model.Contest{
 		ContestName:      "Contest A",
-		ContestStartDate: datatypes.Date(time.Now()),
-		ContestEndDate:   datatypes.Date(time.Now().Add(24 * time.Hour)),
+		ContestStartDate: time.Now(),
+		ContestEndDate:   time.Now().Add(24 * time.Hour),
 	}
 	if err := CreateContest(contest); err != nil {
 		t.Fatalf("CreateContest failed: %v", err)
@@ -381,8 +380,8 @@ func TestSystemFunctions(t *testing.T) {
 		t.Fatalf("WriteSystemEmailConfig failed: %v", err)
 	}
 
-	c1 := model.Contest{ContestName: "C1", ContestStartDate: datatypes.Date(time.Now()), ContestEndDate: datatypes.Date(time.Now())}
-	c2 := model.Contest{ContestName: "C2", ContestStartDate: datatypes.Date(time.Now()), ContestEndDate: datatypes.Date(time.Now())}
+	c1 := model.Contest{ContestName: "C1", ContestStartDate: time.Now(), ContestEndDate: time.Now()}
+	c2 := model.Contest{ContestName: "C2", ContestStartDate: time.Now(), ContestEndDate: time.Now()}
 	if err := db.Create(&c1).Error; err != nil {
 		t.Fatalf("create contest c1 failed: %v", err)
 	}
@@ -558,8 +557,69 @@ func TestScriptFlowFunctions(t *testing.T) {
 		t.Fatalf("expected active version v2, got %+v", resolvedSteps[0].Version)
 	}
 
+	flowContest := &model.ScriptFlow{FlowKey: "submission_pre_chain_contest", FlowName: "Submission Contest Chain", IsEnabled: true}
+	if err = CreateScriptFlow(flowContest); err != nil {
+		t.Fatalf("CreateScriptFlow contest failed: %v", err)
+	}
+	if err = ReplaceFlowSteps(flowContest.FlowID, []model.FlowStep{{
+		StepOrder:       1,
+		StepName:        "contest_guard",
+		ScriptID:        def.ScriptID,
+		TimeoutMs:       1000,
+		FailureStrategy: "fail_close",
+		IsEnabled:       true,
+	}}); err != nil {
+		t.Fatalf("ReplaceFlowSteps contest failed: %v", err)
+	}
+	mountContest := &model.FlowMount{FlowID: flowContest.FlowID, Scope: "submission", EventKey: "file_pre", TargetType: "contest", TargetID: 77, IsEnabled: true}
+	if err = CreateFlowMount(mountContest); err != nil {
+		t.Fatalf("CreateFlowMount contest failed: %v", err)
+	}
+
+	flowTrack := &model.ScriptFlow{FlowKey: "submission_pre_chain_track", FlowName: "Submission Track Chain", IsEnabled: true}
+	if err = CreateScriptFlow(flowTrack); err != nil {
+		t.Fatalf("CreateScriptFlow track failed: %v", err)
+	}
+	if err = ReplaceFlowSteps(flowTrack.FlowID, []model.FlowStep{{
+		StepOrder:       1,
+		StepName:        "track_guard",
+		ScriptID:        def.ScriptID,
+		TimeoutMs:       1000,
+		FailureStrategy: "fail_close",
+		IsEnabled:       true,
+	}}); err != nil {
+		t.Fatalf("ReplaceFlowSteps track failed: %v", err)
+	}
+	mountTrack := &model.FlowMount{FlowID: flowTrack.FlowID, Scope: "submission", EventKey: "file_pre", TargetType: "track", TargetID: 999, IsEnabled: true}
+	if err = CreateFlowMount(mountTrack); err != nil {
+		t.Fatalf("CreateFlowMount track failed: %v", err)
+	}
+
+	chains, err := ResolveFlowChainForExecution("submission", "file_pre", 77, 999)
+	if err != nil {
+		t.Fatalf("ResolveFlowChainForExecution failed: %v", err)
+	}
+	if len(chains) != 3 {
+		t.Fatalf("expected 3 resolved chains, got %d", len(chains))
+	}
+	if chains[0].TargetType != "global" || chains[0].Flow.FlowID != flow.FlowID {
+		t.Fatalf("unexpected global chain: %+v", chains[0])
+	}
+	if chains[1].TargetType != "contest" || chains[1].Flow.FlowID != flowContest.FlowID {
+		t.Fatalf("unexpected contest chain: %+v", chains[1])
+	}
+	if chains[2].TargetType != "track" || chains[2].Flow.FlowID != flowTrack.FlowID {
+		t.Fatalf("unexpected track chain: %+v", chains[2])
+	}
+
 	if err = DeleteFlowMount(mount.MountID); err != nil {
 		t.Fatalf("DeleteFlowMount failed: %v", err)
+	}
+	if err = DeleteFlowMount(mountContest.MountID); err != nil {
+		t.Fatalf("DeleteFlowMount contest failed: %v", err)
+	}
+	if err = DeleteFlowMount(mountTrack.MountID); err != nil {
+		t.Fatalf("DeleteFlowMount track failed: %v", err)
 	}
 	if _, _, err = ResolveFlowForExecution("submission", "file_pre", "track", 999); err != ErrFlowNotMounted {
 		t.Fatalf("expected ErrFlowNotMounted, got %v", err)

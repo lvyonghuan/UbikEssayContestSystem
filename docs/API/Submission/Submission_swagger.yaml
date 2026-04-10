@@ -53,8 +53,8 @@ definitions:
 host: localhost:80
 info:
   contact: {}
-  description: Ubik 绋夸欢鎻愪氦绯荤粺鎺ュ彛鏂囨。
-  title: 浣滆€呯API
+  description: Ubik 系统提交接口文档
+  title: Submission API
   version: "1.0"
 paths:
   /author:
@@ -301,6 +301,11 @@ paths:
         name: article_file
         required: true
         type: file
+      - description: 提交文件 SHA-256（64位十六进制）
+        in: formData
+        name: file_hash
+        required: true
+        type: string
       produces:
       - application/json
       responses:
@@ -309,6 +314,32 @@ paths:
           schema:
             $ref: '#/definitions/model.Response'
       summary: 上传提交文件
+      tags:
+      - 作者端
+  /author/submission/file/{submission_id}:
+    get:
+      consumes:
+      - application/json
+      description: 下载当前作者自己的投稿文件
+      parameters:
+      - description: Bearer {access_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 投稿ID(work_id)
+        in: path
+        name: submission_id
+        required: true
+        type: integer
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: 投稿文件
+          schema:
+            type: file
+      summary: 下载提交文件
       tags:
       - 作者端
 swagger: "2.0"

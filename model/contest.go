@@ -1,14 +1,14 @@
 package model
 
-import "gorm.io/datatypes"
+import "time"
 
 // Contest 比赛模型
 type Contest struct {
-	ContestID           int            `gorm:"primaryKey;autoIncrement" json:"contestID"`
-	ContestName         string         `json:"contestName"`         //比赛名称
-	ContestStartDate    datatypes.Date `json:"contestStartDate"`    //比赛开始日期，精确到分
-	ContestEndDate      datatypes.Date `json:"contestEndDate"`      //比赛结束日期，精确到分
-	ContestIntroduction string         `json:"contestIntroduction"` //比赛简介
+	ContestID           int       `gorm:"primaryKey;autoIncrement" json:"contestID"`
+	ContestName         string    `json:"contestName"`                            //比赛名称
+	ContestStartDate    time.Time `gorm:"type:timestamp" json:"contestStartDate"` //比赛开始时间，TIMESTAMP
+	ContestEndDate      time.Time `gorm:"type:timestamp" json:"contestEndDate"`   //比赛结束时间，TIMESTAMP
+	ContestIntroduction string    `json:"contestIntroduction"`                    //比赛简介
 }
 
 type Track struct {

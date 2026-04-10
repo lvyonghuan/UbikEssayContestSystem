@@ -10,6 +10,7 @@ import (
 
 func backupSystemStartHooks(t *testing.T) {
 	origInitContestRedisCacheFn := initContestRedisCacheFn
+	origInitContestEndSchedulesFn := initContestEndSchedulesFn
 	origInitGlobalInfoRouterFn := initGlobalInfoRouterFn
 	origGetContestListForCacheFn := getContestListForCacheFn
 	origGetTracksByContestFn := getTracksByContestFn
@@ -17,6 +18,7 @@ func backupSystemStartHooks(t *testing.T) {
 
 	t.Cleanup(func() {
 		initContestRedisCacheFn = origInitContestRedisCacheFn
+		initContestEndSchedulesFn = origInitContestEndSchedulesFn
 		initGlobalInfoRouterFn = origInitGlobalInfoRouterFn
 		getContestListForCacheFn = origGetContestListForCacheFn
 		getTracksByContestFn = origGetTracksByContestFn
@@ -92,9 +94,14 @@ func TestSysStart(t *testing.T) {
 	backupSystemStartHooks(t)
 
 	cacheCalled := false
+	scheduleCalled := false
 	routerCalled := make(chan struct{}, 1)
 	initContestRedisCacheFn = func() error {
 		cacheCalled = true
+		return nil
+	}
+	initContestEndSchedulesFn = func() error {
+		scheduleCalled = true
 		return nil
 	}
 	initGlobalInfoRouterFn = func(apiConf conf.APIConfig) {
@@ -104,6 +111,9 @@ func TestSysStart(t *testing.T) {
 	SysStart(conf.APIConfig{GlobalInfoPort: "18888"})
 	if !cacheCalled {
 		t.Fatal("SysStart should initialize contest redis cache")
+	}
+	if !scheduleCalled {
+		t.Fatal("SysStart should initialize contest end schedules")
 	}
 
 	select {
@@ -123,6 +133,23 @@ func TestSysStartPanicOnCacheInitFailure(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatal("SysStart should panic when contest cache initialization fails")
+		}
+	}()
+
+	SysStart(conf.APIConfig{})
+}
+
+func TestSysStartPanicOnScheduleInitFailure(t *testing.T) {
+	backupSystemStartHooks(t)
+
+	initContestRedisCacheFn = func() error { return nil }
+	initContestEndSchedulesFn = func() error {
+		return errors.New("boom schedule")
+	}
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("SysStart should panic when contest end schedule initialization fails")
 		}
 	}()
 

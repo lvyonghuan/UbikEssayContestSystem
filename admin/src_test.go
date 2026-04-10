@@ -40,6 +40,8 @@ func backupSrcHooks(t *testing.T) {
 	origDeleteTrackFn := deleteTrackFn
 	origCreateTrackCacheFn := createTrackCacheFn
 	origDeleteTrackCacheFn := deleteTrackCacheFn
+	origRegisterContestEndScheduleFn := registerContestEndScheduleFn
+	origCancelContestEndScheduleFn := cancelContestEndScheduleFn
 	origListAuthorsFn := listAuthorsFn
 	origGetAuthorByIDFn := getAuthorByIDFn
 	origUpdateAuthorByIDFn := updateAuthorByIDFn
@@ -67,6 +69,8 @@ func backupSrcHooks(t *testing.T) {
 	origSendSMTPMailFn := sendSMTPMailFn
 
 	log.Logger = testLogger{}
+	registerContestEndScheduleFn = func(contest model.Contest) {}
+	cancelContestEndScheduleFn = func(contestID int) {}
 
 	t.Cleanup(func() {
 		log.Logger = origLogger
@@ -82,6 +86,8 @@ func backupSrcHooks(t *testing.T) {
 		deleteTrackFn = origDeleteTrackFn
 		createTrackCacheFn = origCreateTrackCacheFn
 		deleteTrackCacheFn = origDeleteTrackCacheFn
+		registerContestEndScheduleFn = origRegisterContestEndScheduleFn
+		cancelContestEndScheduleFn = origCancelContestEndScheduleFn
 		listAuthorsFn = origListAuthorsFn
 		getAuthorByIDFn = origGetAuthorByIDFn
 		updateAuthorByIDFn = origUpdateAuthorByIDFn

@@ -5,6 +5,7 @@ import (
 	"main/database/pgsql"
 	"main/database/redis"
 	"main/model"
+	"main/system"
 	_const "main/util/const"
 	"main/util/log"
 	"main/util/password"
@@ -29,15 +30,17 @@ var (
 	getTracksByContestFn = pgsql.GetTracksByContestID
 	getContestByIDFn     = pgsql.GetContestByID
 
-	createTrackFn      = pgsql.CreateTrack
-	updateTrackFn      = pgsql.UpdateTrack
-	deleteTrackFn      = pgsql.DeleteTrack
-	createTrackCacheFn = redis.CreateTrack
-	deleteTrackCacheFn = redis.DeleteTrack
-	listAuthorsFn      = pgsql.ListAuthors
-	getAuthorByIDFn    = pgsql.GetAuthorByAuthorID
-	updateAuthorByIDFn = pgsql.UpdateAuthorByID
-	deleteAuthorByIDFn = pgsql.DeleteAuthorByID
+	createTrackFn                = pgsql.CreateTrack
+	updateTrackFn                = pgsql.UpdateTrack
+	deleteTrackFn                = pgsql.DeleteTrack
+	createTrackCacheFn           = redis.CreateTrack
+	deleteTrackCacheFn           = redis.DeleteTrack
+	registerContestEndScheduleFn = system.RegisterContestEndSchedule
+	cancelContestEndScheduleFn   = system.CancelContestEndSchedule
+	listAuthorsFn                = pgsql.ListAuthors
+	getAuthorByIDFn              = pgsql.GetAuthorByAuthorID
+	updateAuthorByIDFn           = pgsql.UpdateAuthorByID
+	deleteAuthorByIDFn           = pgsql.DeleteAuthorByID
 
 	getWorkByIDFn      = pgsql.GetWorkByID
 	getWorksByTrackFn  = pgsql.GetWorksByTrackID
@@ -87,6 +90,8 @@ func createContestSrc(adminID int, contest *model.Contest) error {
 		return uerr.ExtractError(err)
 	}
 
+	registerContestEndScheduleFn(*contest)
+
 	// 记录管理行为日志
 	createActionLogFn(adminID, _const.Contests, _const.Create,
 		genDetails([]string{"contest_name", "contest_id"}, []string{contest.ContestName, strconv.Itoa(contest.ContestID)}))
@@ -95,11 +100,14 @@ func createContestSrc(adminID int, contest *model.Contest) error {
 }
 
 func updateContestSrc(adminID int, contestID int, updatedContest *model.Contest) error {
+	updatedContest.ContestID = contestID
 	err := updateContestFn(contestID, updatedContest)
 	if err != nil {
 		log.Logger.Warn("Update contest error: " + err.Error())
 		return uerr.ExtractError(err)
 	}
+
+	registerContestEndScheduleFn(*updatedContest)
 
 	tracks, err := getTracksByContestFn(contestID)
 	if err != nil {
@@ -133,6 +141,8 @@ func deleteContestSrc(adminID int, contestID int) error {
 		log.Logger.Warn("Delete contest error: " + err.Error())
 		return uerr.ExtractError(err)
 	}
+
+	cancelContestEndScheduleFn(contestID)
 
 	for _, track := range tracks {
 		cacheErr := deleteTrackCacheFn(track.TrackID)

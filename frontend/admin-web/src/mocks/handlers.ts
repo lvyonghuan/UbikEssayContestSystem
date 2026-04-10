@@ -56,6 +56,12 @@ function ensureFlowMountList(flowId: number) {
   return mockFlowMountsByFlow[flowId]
 }
 
+function toJsonObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
 export const handlers = [
   http.post('/api/admin/admin/login', async ({ request }) => {
     const body = await request.json() as { adminName?: string; password?: string }
@@ -187,9 +193,24 @@ export const handlers = [
 
   http.post('/api/admin/admin/scripts', async ({ request }) => {
     const payload = await request.json() as Record<string, unknown>
+    const description = typeof payload.description === 'string'
+      ? payload.description
+      : typeof payload.scriptDescription === 'string'
+        ? payload.scriptDescription
+        : ''
+    const meta = payload.meta && typeof payload.meta === 'object' && !Array.isArray(payload.meta)
+      ? toJsonObject(payload.meta)
+      : payload.extensionData && typeof payload.extensionData === 'object' && !Array.isArray(payload.extensionData)
+        ? toJsonObject(payload.extensionData)
+        : {}
+
     const nextScript = {
       ...payload,
       scriptID: nextScriptId++,
+      description,
+      scriptDescription: description,
+      meta,
+      extensionData: meta,
       isEnabled: false,
       createdAt: new Date().toISOString(),
     }
@@ -204,10 +225,25 @@ export const handlers = [
     if (index < 0) {
       return HttpResponse.json({ code: 404, msg: '脚本不存在' }, { status: 404 })
     }
+    const description = typeof payload.description === 'string'
+      ? payload.description
+      : typeof payload.scriptDescription === 'string'
+        ? payload.scriptDescription
+        : mockScripts[index].description || mockScripts[index].scriptDescription || ''
+    const meta = payload.meta && typeof payload.meta === 'object' && !Array.isArray(payload.meta)
+      ? toJsonObject(payload.meta)
+      : payload.extensionData && typeof payload.extensionData === 'object' && !Array.isArray(payload.extensionData)
+        ? toJsonObject(payload.extensionData)
+        : toJsonObject(mockScripts[index].meta || mockScripts[index].extensionData)
+
     mockScripts[index] = {
       ...mockScripts[index],
       ...payload,
       scriptID: scriptId,
+      description,
+      scriptDescription: description,
+      meta,
+      extensionData: meta,
       updatedAt: new Date().toISOString(),
     }
     return HttpResponse.json({ code: 200, msg: mockScripts[index] })
@@ -241,17 +277,23 @@ export const handlers = [
       ? (file as { name: string }).name
       : `script-${scriptId}.txt`
 
+    const versions = ensureScriptVersionList(scriptId)
+    const maxVersionNum = versions.reduce((max, item) => Math.max(max, item.versionNum || 0), 0)
+    const versionNum = maxVersionNum + 1
+
     const nextVersion: ScriptVersion = {
       versionID: nextVersionId++,
       scriptID: scriptId,
-      versionName: `v${Date.now()}`,
+      versionNum,
+      versionName: `v${versionNum}`,
       fileName,
-      fileURL: `/mock/script-files/${scriptId}/${fileName}`,
+      relativePath: `scripts/${scriptId}/v${versionNum}/${fileName}`,
+      checksum: `sha256:${scriptId}:${versionNum}`,
+      createdBy: 1,
       isActive: false,
       createdAt: new Date().toISOString(),
     }
 
-    const versions = ensureScriptVersionList(scriptId)
     versions.push(nextVersion)
     return HttpResponse.json({ code: 200, msg: nextVersion })
   }),
@@ -299,9 +341,24 @@ export const handlers = [
 
   http.post('/api/admin/admin/script-flows', async ({ request }) => {
     const payload = await request.json() as Record<string, unknown>
+    const description = typeof payload.description === 'string'
+      ? payload.description
+      : typeof payload.flowDescription === 'string'
+        ? payload.flowDescription
+        : ''
+    const meta = payload.meta && typeof payload.meta === 'object' && !Array.isArray(payload.meta)
+      ? toJsonObject(payload.meta)
+      : payload.extensionData && typeof payload.extensionData === 'object' && !Array.isArray(payload.extensionData)
+        ? toJsonObject(payload.extensionData)
+        : {}
+
     const nextFlow = {
       ...payload,
       flowID: nextFlowId++,
+      description,
+      flowDescription: description,
+      meta,
+      extensionData: meta,
       isEnabled: false,
       createdAt: new Date().toISOString(),
     }
@@ -317,10 +374,25 @@ export const handlers = [
       return HttpResponse.json({ code: 404, msg: '流程不存在' }, { status: 404 })
     }
 
+    const description = typeof payload.description === 'string'
+      ? payload.description
+      : typeof payload.flowDescription === 'string'
+        ? payload.flowDescription
+        : mockFlows[index].description || mockFlows[index].flowDescription || ''
+    const meta = payload.meta && typeof payload.meta === 'object' && !Array.isArray(payload.meta)
+      ? toJsonObject(payload.meta)
+      : payload.extensionData && typeof payload.extensionData === 'object' && !Array.isArray(payload.extensionData)
+        ? toJsonObject(payload.extensionData)
+        : toJsonObject(mockFlows[index].meta || mockFlows[index].extensionData)
+
     mockFlows[index] = {
       ...mockFlows[index],
       ...payload,
       flowID: flowId,
+      description,
+      flowDescription: description,
+      meta,
+      extensionData: meta,
       updatedAt: new Date().toISOString(),
     }
 
@@ -350,6 +422,12 @@ export const handlers = [
       ...item,
       flowID: flowId,
       stepID: item.stepID || nextStepId++,
+      scriptVersionID: item.scriptVersionID,
+      isEnabled: item.isEnabled ?? true,
+      failureStrategy: item.failureStrategy || 'CONTINUE',
+      inputTemplate: item.inputTemplate || item.stepConfig || {},
+      timeoutMs: item.timeoutMs || 5000,
+      stepConfig: item.inputTemplate || item.stepConfig || {},
     }))
 
     mockFlowStepsByFlow[flowId] = normalized
@@ -372,9 +450,29 @@ export const handlers = [
       return HttpResponse.json({ code: 404, msg: '流程不存在' }, { status: 404 })
     }
 
+    const scope = payload.scope || payload.targetType || payload.containerType || 'global'
+    if (scope !== 'global' && scope !== 'contest' && scope !== 'track') {
+      return HttpResponse.json({ code: 400, msg: 'scope must be global/contest/track' }, { status: 400 })
+    }
+
+    const targetType = payload.targetType || payload.containerType || scope
+    const targetID = scope === 'global' ? 0 : payload.targetID ?? payload.containerID
+    if (scope !== 'global' && (!Number.isInteger(targetID) || Number(targetID) <= 0)) {
+      return HttpResponse.json({ code: 400, msg: 'targetID must be positive integer' }, { status: 400 })
+    }
+
+    const eventKey = payload.eventKey || (flow.meta && typeof flow.meta.trigger === 'string' ? flow.meta.trigger : 'work_created')
+
     const nextMount: FlowMount = {
       ...payload,
       mountID: nextMountId++,
+      scope,
+      targetType,
+      targetID: Number(targetID),
+      eventKey,
+      isEnabled: payload.isEnabled ?? true,
+      containerType: targetType,
+      containerID: Number(targetID),
       createdAt: new Date().toISOString(),
     }
     ensureFlowMountList(payload.flowID).push(nextMount)

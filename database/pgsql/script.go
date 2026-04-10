@@ -16,6 +16,13 @@ type ResolvedFlowStep struct {
 	Version model.ScriptVersion    `json:"version"`
 }
 
+type ResolvedFlowChain struct {
+	TargetType string             `json:"targetType"`
+	TargetID   int                `json:"targetID"`
+	Flow       model.ScriptFlow   `json:"flow"`
+	Steps      []ResolvedFlowStep `json:"steps"`
+}
+
 func CreateScriptDefinition(def *model.ScriptDefinition) error {
 	err := postgresDB.Create(def).Error
 	if err != nil {
@@ -311,8 +318,63 @@ func ResolveFlowForExecution(scope string, eventKey string, targetType string, t
 		return model.ScriptFlow{}, nil, err
 	}
 
+	return resolveFlowByID(mount.FlowID)
+}
+
+func ResolveFlowChainForExecution(scope string, eventKey string, contestID int, trackID int) ([]ResolvedFlowChain, error) {
+	targets := []struct {
+		targetType string
+		targetID   int
+	}{
+		{targetType: "global", targetID: 0},
+	}
+
+	if contestID > 0 {
+		targets = append(targets, struct {
+			targetType string
+			targetID   int
+		}{targetType: "contest", targetID: contestID})
+	}
+	if trackID > 0 {
+		targets = append(targets, struct {
+			targetType string
+			targetID   int
+		}{targetType: "track", targetID: trackID})
+	}
+
+	chains := make([]ResolvedFlowChain, 0, len(targets))
+	for _, target := range targets {
+		mount, err := findMountedFlowExact(scope, eventKey, target.targetType, target.targetID)
+		if err != nil {
+			if errors.Is(err, ErrFlowNotMounted) {
+				continue
+			}
+			return nil, err
+		}
+
+		flow, steps, err := resolveFlowByID(mount.FlowID)
+		if err != nil {
+			return nil, err
+		}
+
+		chains = append(chains, ResolvedFlowChain{
+			TargetType: target.targetType,
+			TargetID:   target.targetID,
+			Flow:       flow,
+			Steps:      steps,
+		})
+	}
+
+	if len(chains) == 0 {
+		return nil, ErrFlowNotMounted
+	}
+
+	return chains, nil
+}
+
+func resolveFlowByID(flowID int) (model.ScriptFlow, []ResolvedFlowStep, error) {
 	var flow model.ScriptFlow
-	err = postgresDB.Where("flow_id = ? AND is_enabled = ?", mount.FlowID, true).First(&flow).Error
+	err := postgresDB.Where("flow_id = ? AND is_enabled = ?", flowID, true).First(&flow).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return model.ScriptFlow{}, nil, ErrFlowNotMounted
@@ -365,6 +427,22 @@ func ResolveFlowForExecution(scope string, eventKey string, targetType string, t
 }
 
 func findMountedFlow(scope string, eventKey string, targetType string, targetID int) (model.FlowMount, error) {
+	mount, err := findMountedFlowExact(scope, eventKey, targetType, targetID)
+	if err == nil {
+		return mount, nil
+	}
+	if !errors.Is(err, ErrFlowNotMounted) {
+		return model.FlowMount{}, err
+	}
+
+	if targetType == "global" {
+		return model.FlowMount{}, ErrFlowNotMounted
+	}
+
+	return findMountedFlowExact(scope, eventKey, "global", 0)
+}
+
+func findMountedFlowExact(scope string, eventKey string, targetType string, targetID int) (model.FlowMount, error) {
 	var mount model.FlowMount
 	err := postgresDB.Where(
 		"scope = ? AND event_key = ? AND target_type = ? AND target_id = ? AND is_enabled = ?",
@@ -380,21 +458,5 @@ func findMountedFlow(scope string, eventKey string, targetType string, targetID 
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return model.FlowMount{}, uerr.NewError(err)
 	}
-
-	err = postgresDB.Where(
-		"scope = ? AND event_key = ? AND target_type = ? AND target_id = ? AND is_enabled = ?",
-		scope,
-		eventKey,
-		"global",
-		0,
-		true,
-	).First(&mount).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return model.FlowMount{}, ErrFlowNotMounted
-		}
-		return model.FlowMount{}, uerr.NewError(err)
-	}
-
-	return mount, nil
+	return model.FlowMount{}, ErrFlowNotMounted
 }

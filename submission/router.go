@@ -54,6 +54,7 @@ func buildSubmissionRouter() *gin.Engine {
 			{
 				submission.GET("", checkAccessToken, getSubmissions)
 				submission.POST("/file", checkAccessToken, saveSubmissionFile) //FIXME 上传文档完整性校验？大小限制？或者上传速率限制？
+				submission.GET("/file/:submission_id", checkAccessToken, getSubmissionFile)
 				submission.POST("", checkAccessToken, checkWorkSubmissionValid, submissionWork)
 				submission.PUT("", checkAccessToken, checkWorkSubmissionValid, updateSubmission)
 				submission.DELETE("", checkAccessToken, checkWorkSubmissionValid, deleteSubmission)
@@ -94,7 +95,14 @@ func checkWorkSubmissionValid(c *gin.Context) {
 		return
 	}
 
-	work.AuthorID = c.GetInt("author_token_id") // 从token中获取作者ID，确保提交的作品与当前登录的作者关联
+	tokenAuthorID := c.GetInt("author_token_id")
+	if work.AuthorID != 0 && work.AuthorID != tokenAuthorID {
+		response.RespError(c, 403, "forbidden: can only operate your own submissions")
+		c.Abort()
+		return
+	}
+
+	work.AuthorID = tokenAuthorID // 从token中获取作者ID，确保提交的作品与当前登录的作者关联
 
 	c.Set("work", work)
 	c.Next()

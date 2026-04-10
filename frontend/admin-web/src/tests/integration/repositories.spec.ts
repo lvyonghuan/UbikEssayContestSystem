@@ -56,10 +56,13 @@ describe('repositories with mock api', () => {
 
     const createdScript = await createScriptDefinition({
       scriptName: '测试脚本',
-      scriptDescription: 'integration test',
-      extensionData: { language: 'python' },
+      scriptKey: 'integration-script',
+      description: 'integration test',
+      interpreter: 'python3',
+      meta: { language: 'python' },
     })
     expect(createdScript.scriptID).toBeTruthy()
+    expect(createdScript.description || createdScript.scriptDescription).toContain('integration')
 
     const scriptId = createdScript.scriptID as number
     await updateScriptDefinitionStatus(scriptId, { isEnabled: true })
@@ -81,8 +84,9 @@ describe('repositories with mock api', () => {
 
     const createdFlow = await createScriptFlow({
       flowName: '测试流程',
-      flowDescription: 'integration flow',
-      extensionData: { trigger: 'manual' },
+      flowKey: 'integration-flow',
+      description: 'integration flow',
+      meta: { trigger: 'work_created' },
     })
     expect(createdFlow.flowID).toBeTruthy()
 
@@ -94,23 +98,33 @@ describe('repositories with mock api', () => {
         stepOrder: 1,
         stepName: 'step1',
         scriptID: scriptId,
-        stepConfig: { retry: 0 },
+        scriptVersionID: versionId,
+        failureStrategy: 'CONTINUE',
+        timeoutMs: 5000,
+        inputTemplate: { retry: 0 },
+        isEnabled: true,
       },
     ])
 
     const steps = await fetchFlowSteps(flowId)
     expect(steps.length).toBeGreaterThan(0)
+    expect(steps[0].scriptVersionID).toBe(versionId)
+    expect(steps[0].failureStrategy).toBe('CONTINUE')
 
     const mount = await createFlowMount({
       flowID: flowId,
-      containerType: 'track',
-      containerID: 101,
-      mountConfig: { phase: 'submission' },
+      scope: 'track',
+      targetType: 'track',
+      targetID: 101,
+      eventKey: 'work_created',
+      isEnabled: true,
     })
     expect(mount.mountID).toBeTruthy()
+    expect(mount.scope).toBe('track')
 
     const mounts = await fetchFlowMounts(flowId)
     expect(mounts.length).toBeGreaterThan(0)
+    expect(mounts[0].eventKey).toBeTruthy()
 
     await removeFlowMount(mount.mountID as number)
     const mountsAfterDelete = await fetchFlowMounts(flowId)

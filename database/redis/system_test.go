@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"gorm.io/datatypes"
 )
 
 func initTestRedis(t *testing.T) *miniredis.Miniredis {
@@ -47,8 +46,8 @@ func TestTrackCacheLifecycle(t *testing.T) {
 	initTestRedis(t)
 
 	contest := model.Contest{
-		ContestStartDate: datatypes.Date(time.Unix(1000, 0)),
-		ContestEndDate:   datatypes.Date(time.Unix(2000, 0)),
+		ContestStartDate: time.Unix(1000, 0),
+		ContestEndDate:   time.Unix(2000, 0),
 	}
 	track := model.Track{TrackID: 9}
 
@@ -61,8 +60,8 @@ func TestTrackCacheLifecycle(t *testing.T) {
 		t.Fatalf("GetStartAndEndDate failed: %v", err)
 	}
 
-	expStart := time.Time(contest.ContestStartDate).Unix()
-	expEnd := time.Time(contest.ContestEndDate).Unix()
+	expStart := contest.ContestStartDate.Unix()
+	expEnd := contest.ContestEndDate.Unix()
 	if start != expStart || end != expEnd {
 		t.Fatalf("unexpected start/end: got (%d,%d) expect (%d,%d)", start, end, expStart, expEnd)
 	}

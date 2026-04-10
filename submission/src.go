@@ -36,6 +36,7 @@ var (
 	setUploadFilePermissionFn      = redis.SetUploadFilePermission
 	getStartAndEndDateFn           = redis.GetStartAndEndDate
 	resolveFlowForExecutionFn      = pgsql.ResolveFlowForExecution
+	resolveFlowChainForExecutionFn = pgsql.ResolveFlowChainForExecution
 
 	executeScriptChainFn = func(chain scriptflow.ChainConfig, input scriptflow.ExecuteInput) (scriptflow.ChainResult, error) {
 		executor := scriptflow.NewExecutor(".", 5*time.Second, []string{"python3", "python", "bash", "sh", "node"})
@@ -133,9 +134,10 @@ func submissionWorkSrc(work *model.Work) error {
 		return uerr.ExtractError(err)
 	}
 
-	hookResult, err := runTrackHook(
+	hookResult, err := runTrackHookWithContest(
 		scriptflow.ScopeSubmission,
 		scriptflow.EventSubmissionPre,
+		track.ContestID,
 		work.TrackID,
 		map[string]any{
 			"phase":         "create",
@@ -278,6 +280,65 @@ func checkSubmissionTimeValid(trackID int) error {
 }
 
 func runTrackHook(scope string, eventKey string, trackID int, payload map[string]any) (scriptflow.ChainResult, error) {
+	track, err := getTrackByIDFn(trackID)
+	if err != nil {
+		log.Logger.Warn("Get track by id failed in runTrackHook: " + err.Error())
+		return scriptflow.ChainResult{Allowed: false}, uerr.ExtractError(err)
+	}
+
+	return runTrackHookWithContest(scope, eventKey, track.ContestID, trackID, payload)
+}
+
+func runTrackHookWithContest(scope string, eventKey string, contestID int, trackID int, payload map[string]any) (scriptflow.ChainResult, error) {
+	if resolveFlowChainForExecutionFn != nil {
+		chains, err := resolveFlowChainForExecutionFn(scope, eventKey, contestID, trackID)
+		if err != nil {
+			if errors.Is(err, pgsql.ErrFlowNotMounted) {
+				return scriptflow.ChainResult{Allowed: true}, nil
+			}
+			log.Logger.Warn("Resolve script flow chain failed: " + err.Error())
+			return scriptflow.ChainResult{Allowed: false}, uerr.ExtractError(err)
+		}
+
+		merged := scriptflow.ChainResult{Allowed: true, Patch: map[string]any{}}
+		for _, chain := range chains {
+			result, err := executeResolvedFlow(scope, eventKey, trackID, chain.Flow, chain.Steps, payload)
+			if err != nil {
+				if errors.Is(err, scriptflow.ErrExecutionBlocked) {
+					merged.Allowed = false
+					merged.Reason = result.Reason
+					mergeWorkInfosResult(merged.Patch, result.Patch)
+					merged.Steps = append(merged.Steps, result.Steps...)
+					if len(merged.Patch) == 0 {
+						merged.Patch = nil
+					}
+					return merged, nil
+				}
+				return result, err
+			}
+
+			mergeWorkInfosResult(merged.Patch, result.Patch)
+			merged.Steps = append(merged.Steps, result.Steps...)
+			if !result.Allowed {
+				merged.Allowed = false
+				merged.Reason = result.Reason
+				if len(merged.Patch) == 0 {
+					merged.Patch = nil
+				}
+				return merged, nil
+			}
+		}
+
+		if len(merged.Patch) == 0 {
+			merged.Patch = nil
+		}
+		return merged, nil
+	}
+
+	return runTrackHookLegacy(scope, eventKey, trackID, payload)
+}
+
+func runTrackHookLegacy(scope string, eventKey string, trackID int, payload map[string]any) (scriptflow.ChainResult, error) {
 	flow, steps, err := resolveFlowForExecutionFn(scope, eventKey, "track", trackID)
 	if err != nil {
 		if errors.Is(err, pgsql.ErrFlowNotMounted) {
@@ -331,6 +392,62 @@ func runTrackHook(scope string, eventKey string, trackID int, payload map[string
 	}
 
 	return result, nil
+}
+
+func executeResolvedFlow(scope string, eventKey string, trackID int, flow model.ScriptFlow, steps []pgsql.ResolvedFlowStep, payload map[string]any) (scriptflow.ChainResult, error) {
+	chain := scriptflow.ChainConfig{
+		Scope:    scope,
+		EventKey: eventKey,
+		FlowKey:  flow.FlowKey,
+		Steps:    make([]scriptflow.StepConfig, 0, len(steps)),
+	}
+	for _, step := range steps {
+		timeout := 5 * time.Second
+		if step.Step.TimeoutMs > 0 {
+			timeout = time.Duration(step.Step.TimeoutMs) * time.Millisecond
+		}
+		strategy := strings.TrimSpace(step.Step.FailureStrategy)
+		if strategy == "" {
+			strategy = "fail_close"
+		}
+		chain.Steps = append(chain.Steps, scriptflow.StepConfig{
+			StepName:        step.Step.StepName,
+			Interpreter:     step.Script.Interpreter,
+			ScriptPath:      filepath.ToSlash(step.Version.RelativePath),
+			Timeout:         timeout,
+			FailureStrategy: strategy,
+			InputTemplate:   step.Step.InputTemplate,
+		})
+	}
+
+	result, err := executeScriptChainFn(chain, scriptflow.ExecuteInput{
+		Scope:    scope,
+		EventKey: eventKey,
+		FlowKey:  flow.FlowKey,
+		TraceID:  fmt.Sprintf("%d", time.Now().UnixNano()),
+		NowUnix:  time.Now().Unix(),
+		Context: map[string]any{
+			"trackID": trackID,
+		},
+		Payload: payload,
+	})
+	if err != nil {
+		if errors.Is(err, scriptflow.ErrExecutionBlocked) {
+			return result, err
+		}
+		return result, err
+	}
+
+	return result, nil
+}
+
+func mergeWorkInfosResult(dst map[string]any, src map[string]any) {
+	if dst == nil || len(src) == 0 {
+		return
+	}
+	for k, v := range src {
+		dst[k] = v
+	}
 }
 
 func mergeWorkInfos(work *model.Work, patch map[string]any) {

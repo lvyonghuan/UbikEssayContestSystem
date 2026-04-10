@@ -14,8 +14,8 @@ import (
 // CreateTrack 在redis中创建比赛缓存，在系统初始化时或创建比赛时调用
 // 实际上只存储比赛的开始日期与结束日期，以时间戳的形式存储
 func CreateTrack(track model.Track, contest model.Contest) error {
-	start := time.Time(contest.ContestStartDate).Unix()
-	end := time.Time(contest.ContestEndDate).Unix()
+	start := contest.ContestStartDate.Unix()
+	end := contest.ContestEndDate.Unix()
 
 	err := rdb.client.Set(rdb.ctx, _const.RedisTrackStartDatePrefix+strconv.Itoa(track.TrackID), start, 0).Err()
 	if err != nil {

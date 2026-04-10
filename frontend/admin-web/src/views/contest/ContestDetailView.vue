@@ -22,8 +22,11 @@ const loading = ref(false)
 const contest = ref<Contest | null>(null)
 const tracks = ref<TrackWithStats[]>([])
 const works = ref<Work[]>([])
+const globalMountCount = ref(0)
 const contestMountCount = ref(0)
 const trackMountCount = ref(0)
+const effectiveMountCount = ref(0)
+const overriddenMountCount = ref(0)
 
 const workFilters = reactive({
   workTitle: '',
@@ -142,12 +145,59 @@ async function loadFlowMountStats(contestID: number, trackIDList: number[]) {
   )
 
   const allMounts = mountGroups.flat()
-  contestMountCount.value = allMounts.filter(
-    (mount) => mount.containerType === 'contest' && mount.containerID === contestID,
-  ).length
-  trackMountCount.value = allMounts.filter(
-    (mount) => mount.containerType === 'track' && trackIDList.includes(mount.containerID),
-  ).length
+  const relevantMounts = allMounts
+    .filter((mount) => {
+      const scope = mount.scope || mount.targetType || mount.containerType || 'global'
+      const targetID = mount.targetID ?? mount.containerID ?? 0
+
+      if (scope === 'track') {
+        return trackIDList.includes(targetID)
+      }
+      if (scope === 'contest') {
+        return targetID === contestID
+      }
+      return scope === 'global'
+    })
+
+  globalMountCount.value = relevantMounts.filter((mount) => {
+    const scope = mount.scope || mount.targetType || mount.containerType || 'global'
+    return scope === 'global'
+  }).length
+
+  contestMountCount.value = relevantMounts.filter((mount) => {
+    const scope = mount.scope || mount.targetType || mount.containerType || 'global'
+    return scope === 'contest'
+  }).length
+
+  trackMountCount.value = relevantMounts.filter((mount) => {
+    const scope = mount.scope || mount.targetType || mount.containerType || 'global'
+    return scope === 'track'
+  }).length
+
+  const scopePriority: Record<string, number> = {
+    global: 1,
+    contest: 2,
+    track: 3,
+  }
+
+  const effectiveByKey = new Map<string, FlowMount>()
+  for (const mount of relevantMounts) {
+    const scope = mount.scope || mount.targetType || mount.containerType || 'global'
+    const key = `${mount.flowID || 0}::${mount.eventKey || 'default'}`
+    const existing = effectiveByKey.get(key)
+    if (!existing) {
+      effectiveByKey.set(key, mount)
+      continue
+    }
+
+    const existingScope = existing.scope || existing.targetType || existing.containerType || 'global'
+    if ((scopePriority[scope] || 0) > (scopePriority[existingScope] || 0)) {
+      effectiveByKey.set(key, mount)
+    }
+  }
+
+  effectiveMountCount.value = effectiveByKey.size
+  overriddenMountCount.value = Math.max(0, relevantMounts.length - effectiveByKey.size)
 }
 
 async function loadDetail() {
@@ -160,6 +210,11 @@ async function loadDetail() {
   contest.value = null
   tracks.value = []
   works.value = []
+  globalMountCount.value = 0
+  contestMountCount.value = 0
+  trackMountCount.value = 0
+  effectiveMountCount.value = 0
+  overriddenMountCount.value = 0
   try {
     const currentContest = await fetchContestByID(contestId.value)
     if (!currentContest) {
@@ -243,7 +298,8 @@ onMounted(loadDetail)
         </article>
         <article class="summary-card">
           <div class="summary-label">流程挂载</div>
-          <div class="summary-subline">比赛级 {{ contestMountCount }} / 赛道级 {{ trackMountCount }}</div>
+          <div class="summary-subline">全局 {{ globalMountCount }} / 比赛 {{ contestMountCount }} / 赛道 {{ trackMountCount }}</div>
+          <div class="summary-subline">生效 {{ effectiveMountCount }}，被覆盖 {{ overriddenMountCount }}</div>
         </article>
       </div>
 

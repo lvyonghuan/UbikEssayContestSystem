@@ -4,13 +4,20 @@ import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { fetchContests } from '@/services/repositories/contestRepository'
-import { fetchMySubmissions, removeSubmission } from '@/services/repositories/submissionRepository'
+import {
+  downloadSubmissionFile,
+  fetchMySubmissions,
+  removeSubmission,
+} from '@/services/repositories/submissionRepository'
 import type { Work } from '@/types/api'
+import { calculateSHA256FromArrayBuffer } from '@/utils/hash'
 
 const router = useRouter()
 const loading = ref(false)
 const submissions = ref<Work[]>([])
 const endedContestIDs = ref<Set<number>>(new Set())
+const contestNameByID = ref<Map<number, string>>(new Map())
+const downloadingWorkIDs = ref<Set<number>>(new Set())
 
 const filters = reactive({
   keyword: '',
@@ -80,12 +87,52 @@ function parseContestID(work: Work) {
   return null
 }
 
+function contestNameText(work: Work) {
+  const rawContestName = work.workInfos?.contestName
+  if (typeof rawContestName === 'string' && rawContestName.trim()) {
+    return rawContestName.trim()
+  }
+
+  const contestID = parseContestID(work)
+  if (!contestID) {
+    return '-'
+  }
+
+  return contestNameByID.value.get(contestID) || `比赛 ${contestID}`
+}
+
 function isReadonlyWork(work: Work) {
   const contestID = parseContestID(work)
   if (!contestID) {
     return false
   }
   return endedContestIDs.value.has(contestID)
+}
+
+function isDownloadingWork(workID?: number) {
+  return typeof workID === 'number' && downloadingWorkIDs.value.has(workID)
+}
+
+function setDownloadingWorkState(workID: number, downloading: boolean) {
+  const next = new Set(downloadingWorkIDs.value)
+  if (downloading) {
+    next.add(workID)
+  } else {
+    next.delete(workID)
+  }
+  downloadingWorkIDs.value = next
+}
+
+function saveBlobAsFile(blob: Blob, fileName: string) {
+  const objectURL = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = objectURL
+  anchor.download = fileName
+  anchor.style.display = 'none'
+  document.body.appendChild(anchor)
+  anchor.click()
+  document.body.removeChild(anchor)
+  URL.revokeObjectURL(objectURL)
 }
 
 async function loadSubmissions() {
@@ -98,10 +145,16 @@ async function loadSubmissions() {
 
     const now = dayjs()
     const endedIDs = new Set<number>()
+    const contestNameMap = new Map<number, string>()
     for (const contest of contests) {
       if (typeof contest.contestID !== 'number') {
         continue
       }
+
+      if (contest.contestName && contest.contestName.trim()) {
+        contestNameMap.set(contest.contestID, contest.contestName.trim())
+      }
+
       const end = dayjs(contest.contestEndDate)
       if (end.isValid() && now.isAfter(end)) {
         endedIDs.add(contest.contestID)
@@ -109,11 +162,13 @@ async function loadSubmissions() {
     }
 
     endedContestIDs.value = endedIDs
+    contestNameByID.value = contestNameMap
     submissions.value = workList
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '稿件列表加载失败')
     submissions.value = []
     endedContestIDs.value = new Set()
+    contestNameByID.value = new Map()
   } finally {
     loading.value = false
   }
@@ -164,6 +219,35 @@ async function onDelete(work: Work) {
   }
 }
 
+async function onDownload(work: Work) {
+  const workID = work.workID
+  if (!workID) {
+    ElMessage.warning('稿件 ID 缺失，无法下载')
+    return
+  }
+  if (isDownloadingWork(workID)) {
+    return
+  }
+
+  setDownloadingWorkState(workID, true)
+  try {
+    const { fileBlob, fileName, fileHashSHA256 } = await downloadSubmissionFile(workID)
+    const downloadedHash = await calculateSHA256FromArrayBuffer(await fileBlob.arrayBuffer())
+
+    if (downloadedHash !== fileHashSHA256) {
+      ElMessage.error('下载失败：文件完整性校验未通过，请重试')
+      return
+    }
+
+    saveBlobAsFile(fileBlob, fileName || `submission-${workID}.docx`)
+    ElMessage.success('稿件下载成功')
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '下载失败，请稍后重试')
+  } finally {
+    setDownloadingWorkState(workID, false)
+  }
+}
+
 onMounted(loadSubmissions)
 </script>
 
@@ -187,6 +271,11 @@ onMounted(loadSubmissions)
     <el-table :data="filteredSubmissions" v-loading="loading" empty-text="暂无投稿记录" style="width: 100%">
       <el-table-column prop="workID" label="稿件ID" width="100" />
       <el-table-column prop="workTitle" label="稿件标题" min-width="220" />
+      <el-table-column label="比赛" min-width="180">
+        <template #default="scope">
+          {{ contestNameText(scope.row) }}
+        </template>
+      </el-table-column>
       <el-table-column label="赛道" min-width="160">
         <template #default="scope">
           {{ scope.row.trackName || `赛道 ${scope.row.trackID || '-'}` }}
@@ -197,12 +286,22 @@ onMounted(loadSubmissions)
           {{ timelineText(scope.row) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="160" fixed="right">
+      <el-table-column label="操作" width="260" fixed="right">
         <template #default="scope">
-          <el-text v-if="isReadonlyWork(scope.row)" type="info">仅可查看</el-text>
-          <el-space v-else>
-            <el-button link type="primary" @click="openEdit(scope.row)">修改</el-button>
-            <el-button link type="danger" @click="onDelete(scope.row)">删除</el-button>
+          <el-space>
+            <el-button
+              link
+              type="primary"
+              :loading="isDownloadingWork(scope.row.workID)"
+              @click="onDownload(scope.row)"
+            >
+              下载
+            </el-button>
+            <template v-if="!isReadonlyWork(scope.row)">
+              <el-button link type="primary" @click="openEdit(scope.row)">修改</el-button>
+              <el-button link type="danger" @click="onDelete(scope.row)">删除</el-button>
+            </template>
+            <el-text v-else type="info">仅可查看</el-text>
           </el-space>
         </template>
       </el-table-column>

@@ -19,8 +19,10 @@ const dialogVisible = ref(false)
 const editingScriptId = ref<number | null>(null)
 const form = reactive({
   scriptName: '',
+  scriptKey: '',
   scriptDescription: '',
-  extensionDataText: '{\n  "runtime": "python3"\n}',
+  interpreter: 'python3',
+  metaText: '{\n  "runtime": "python3"\n}',
 })
 
 const versionDrawerVisible = ref(false)
@@ -31,6 +33,14 @@ const uploadFile = ref<File | null>(null)
 const uploading = ref(false)
 
 const currentScriptName = computed(() => currentScript.value?.scriptName || '未命名脚本')
+
+function normalizeScriptDescription(script: ScriptDefinition) {
+  return script.description || script.scriptDescription || ''
+}
+
+function normalizeScriptMeta(script: ScriptDefinition) {
+  return script.meta || script.extensionData || {}
+}
 
 async function loadScripts() {
   loading.value = true
@@ -46,8 +56,10 @@ async function loadScripts() {
 function resetForm() {
   Object.assign(form, {
     scriptName: '',
+    scriptKey: '',
     scriptDescription: '',
-    extensionDataText: '{\n  "runtime": "python3"\n}',
+    interpreter: 'python3',
+    metaText: '{\n  "runtime": "python3"\n}',
   })
 }
 
@@ -61,21 +73,23 @@ function openEditDialog(script: ScriptDefinition) {
   editingScriptId.value = script.scriptID || null
   Object.assign(form, {
     scriptName: script.scriptName,
-    scriptDescription: script.scriptDescription || '',
-    extensionDataText: JSON.stringify(script.extensionData || {}, null, 2),
+    scriptKey: script.scriptKey || '',
+    scriptDescription: normalizeScriptDescription(script),
+    interpreter: script.interpreter || 'python3',
+    metaText: JSON.stringify(normalizeScriptMeta(script), null, 2),
   })
   dialogVisible.value = true
 }
 
-function parseExtensionData() {
+function parseMeta() {
   try {
-    const parsed = form.extensionDataText.trim() ? JSON.parse(form.extensionDataText) : {}
+    const parsed = form.metaText.trim() ? JSON.parse(form.metaText) : {}
     if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-      throw new Error('invalid extensionData')
+      throw new Error('invalid meta')
     }
     return parsed as Record<string, unknown>
   } catch {
-    ElMessage.error('扩展配置必须是合法 JSON 对象')
+    ElMessage.error('脚本元数据必须是合法 JSON 对象')
     return null
   }
 }
@@ -87,15 +101,19 @@ async function saveScript() {
     return
   }
 
-  const extensionData = parseExtensionData()
-  if (!extensionData) {
+  const meta = parseMeta()
+  if (!meta) {
     return
   }
 
   const payload: ScriptDefinition = {
     scriptName,
+    scriptKey: form.scriptKey.trim() || undefined,
+    description: form.scriptDescription.trim(),
     scriptDescription: form.scriptDescription.trim(),
-    extensionData,
+    interpreter: form.interpreter.trim() || undefined,
+    meta,
+    extensionData: meta,
   }
 
   try {
@@ -210,15 +228,21 @@ onMounted(loadScripts)
     <div class="header-row">
       <div>
         <h1 class="page-title">脚本管理</h1>
-        <p class="page-subtitle">维护脚本定义、启停状态与版本激活</p>
+        <p class="page-subtitle">维护脚本定义、解释器、版本与激活状态</p>
       </div>
       <el-button type="primary" @click="openCreateDialog">新建脚本</el-button>
     </div>
 
     <el-table :data="scripts" v-loading="loading" style="width: 100%">
       <el-table-column prop="scriptID" label="ID" width="90" />
+      <el-table-column prop="scriptKey" label="脚本键" min-width="140" />
       <el-table-column prop="scriptName" label="脚本名称" min-width="180" />
-      <el-table-column prop="scriptDescription" label="描述" min-width="220" />
+      <el-table-column prop="interpreter" label="解释器" width="120" />
+      <el-table-column label="描述" min-width="220">
+        <template #default="scope">
+          {{ scope.row.description || scope.row.scriptDescription || '-' }}
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="120">
         <template #default="scope">
           <el-switch
@@ -244,14 +268,32 @@ onMounted(loadScripts)
 
     <el-dialog v-model="dialogVisible" :title="editingScriptId ? '编辑脚本' : '新建脚本'" width="640px">
       <el-form label-position="top">
-        <el-form-item label="脚本名称" required>
-          <el-input v-model="form.scriptName" />
-        </el-form-item>
-        <el-form-item label="脚本描述">
-          <el-input v-model="form.scriptDescription" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="扩展配置(JSON，可选)">
-          <el-input v-model="form.extensionDataText" type="textarea" :rows="8" />
+        <el-row :gutter="12">
+          <el-col :xs="24" :md="12">
+            <el-form-item label="脚本名称" required>
+              <el-input v-model="form.scriptName" />
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="12">
+            <el-form-item label="脚本键(scriptKey)">
+              <el-input v-model="form.scriptKey" placeholder="建议唯一" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="12">
+          <el-col :xs="24" :md="12">
+            <el-form-item label="解释器">
+              <el-input v-model="form.interpreter" placeholder="例如 python3" />
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="12">
+            <el-form-item label="脚本描述">
+              <el-input v-model="form.scriptDescription" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-form-item label="脚本元数据(meta，JSON)">
+          <el-input v-model="form.metaText" type="textarea" :rows="8" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -268,11 +310,15 @@ onMounted(loadScripts)
 
       <el-table :data="versions" v-loading="versionLoading" style="width: 100%">
         <el-table-column prop="versionID" label="版本ID" width="100" />
+        <el-table-column prop="versionNum" label="序号" width="90" />
         <el-table-column label="版本名/文件名" min-width="200">
           <template #default="scope">
-            {{ scope.row.versionName || scope.row.fileName || `v${scope.row.versionID}` }}
+            {{ scope.row.versionName || scope.row.fileName || (scope.row.versionNum ? `v${scope.row.versionNum}` : `v${scope.row.versionID}`) }}
           </template>
         </el-table-column>
+        <el-table-column prop="checksum" label="校验值" min-width="170" />
+        <el-table-column prop="createdBy" label="上传人" width="100" />
+        <el-table-column prop="relativePath" label="存储路径" min-width="180" />
         <el-table-column prop="createdAt" label="上传时间" min-width="170" />
         <el-table-column label="状态" width="100">
           <template #default="scope">

@@ -23,6 +23,12 @@ func SysStart(apiConf conf.APIConfig) {
 		panic(err)
 	}
 
+	// 初始化比赛结束定时调度
+	err = initContestEndSchedulesFn()
+	if err != nil {
+		panic(err)
+	}
+
 	// 初始化路由
 	go initGlobalInfoRouterFn(apiConf)
 }

@@ -414,6 +414,13 @@ const docTemplateSubmission = `{
                         "name": "article_file",
                         "in": "formData",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "提交文件 SHA-256（64位十六进制）",
+                        "name": "file_hash",
+                        "in": "formData",
+                        "required": true
                     }
                 ],
                 "responses": {
@@ -421,6 +428,45 @@ const docTemplateSubmission = `{
                         "description": "上传成功",
                         "schema": {
                             "$ref": "#/definitions/model.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/author/submission/file/{submission_id}": {
+            "get": {
+                "description": "下载当前作者自己的投稿文件",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "作者端"
+                ],
+                "summary": "下载提交文件",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer {access_token}",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "投稿ID(work_id)",
+                        "name": "submission_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "投稿文件",
+                        "schema": {
+                            "type": "file"
                         }
                     }
                 }
@@ -512,8 +558,8 @@ var SwaggerInfoSubmission = &swag.Spec{
 	Host:             "localhost:80",
 	BasePath:         "/api/v1",
 	Schemes:          []string{},
-	Title:            "浣滆€呯\ue06cAPI",
-	Description:      "Ubik 绋夸欢鎻愪氦绯荤粺鎺ュ彛鏂囨。",
+	Title:            "Submission API",
+	Description:      "Ubik 系统提交接口文档",
 	InfoInstanceName: "Submission",
 	SwaggerTemplate:  docTemplateSubmission,
 	LeftDelim:        "{{",

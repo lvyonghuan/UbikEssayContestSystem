@@ -3,6 +3,8 @@ package submission
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,6 +21,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -34,6 +37,8 @@ func (submissionTestLogger) Fatal(error)   {}
 func (submissionTestLogger) System(string) {}
 
 type fakeConverter struct{}
+
+const defaultFileHashForTests = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func (fakeConverter) ConvertDocToDocx(_ context.Context, srcDocPath string, dstDocxPath string) error {
 	input, err := os.ReadFile(srcDocPath)
@@ -61,6 +66,9 @@ func backupSubmissionHooks(t *testing.T) {
 	origGetUploadFilePermissionFn := getUploadFilePermissionFn
 	origRunTrackHookFn := runTrackHookFn
 	origPatchWorkInfosFn := patchWorkInfosFn
+	origGetSubmissionByWorkIDFn := getSubmissionByWorkIDFn
+	origResolveSubmissionFilePathFn := resolveSubmissionFilePathFn
+	origComputeFileSHA256Fn := computeFileSHA256Fn
 	origNewDocumentConverterFn := newDocumentConverterFn
 
 	origGetAuthorByAuthorNameFn := getAuthorByAuthorNameFn
@@ -77,6 +85,7 @@ func backupSubmissionHooks(t *testing.T) {
 	origSetUploadFilePermissionFn := setUploadFilePermissionFn
 	origGetStartAndEndDateFn := getStartAndEndDateFn
 	origResolveFlowForExecutionFn := resolveFlowForExecutionFn
+	origResolveFlowChainForExecutionFn := resolveFlowChainForExecutionFn
 	origExecuteScriptChainFn := executeScriptChainFn
 	origReadDirFn := readDirFn
 	origRemoveFn := removeFn
@@ -99,6 +108,9 @@ func backupSubmissionHooks(t *testing.T) {
 		getUploadFilePermissionFn = origGetUploadFilePermissionFn
 		runTrackHookFn = origRunTrackHookFn
 		patchWorkInfosFn = origPatchWorkInfosFn
+		getSubmissionByWorkIDFn = origGetSubmissionByWorkIDFn
+		resolveSubmissionFilePathFn = origResolveSubmissionFilePathFn
+		computeFileSHA256Fn = origComputeFileSHA256Fn
 		newDocumentConverterFn = origNewDocumentConverterFn
 
 		getAuthorByAuthorNameFn = origGetAuthorByAuthorNameFn
@@ -115,6 +127,7 @@ func backupSubmissionHooks(t *testing.T) {
 		setUploadFilePermissionFn = origSetUploadFilePermissionFn
 		getStartAndEndDateFn = origGetStartAndEndDateFn
 		resolveFlowForExecutionFn = origResolveFlowForExecutionFn
+		resolveFlowChainForExecutionFn = origResolveFlowChainForExecutionFn
 		executeScriptChainFn = origExecuteScriptChainFn
 		readDirFn = origReadDirFn
 		removeFn = origRemoveFn
@@ -151,6 +164,10 @@ func doMultipartRequest(router http.Handler, path string, auth string, fields ma
 	for k, v := range fields {
 		_ = writer.WriteField(k, v)
 	}
+	if _, hasFileHash := fields["file_hash"]; !hasFileHash {
+		sum := sha256.Sum256(fileContent)
+		_ = writer.WriteField("file_hash", hex.EncodeToString(sum[:]))
+	}
 	part, _ := writer.CreateFormFile(fileField, fileName)
 	_, _ = io.Copy(part, bytes.NewReader(fileContent))
 	_ = writer.Close()
@@ -170,6 +187,9 @@ func doMultipartWithoutFile(router http.Handler, path string, auth string, field
 	writer := multipart.NewWriter(&payload)
 	for k, v := range fields {
 		_ = writer.WriteField(k, v)
+	}
+	if _, hasFileHash := fields["file_hash"]; !hasFileHash {
+		_ = writer.WriteField("file_hash", defaultFileHashForTests)
 	}
 	_ = writer.Close()
 
@@ -223,12 +243,48 @@ func setupSubmissionRouteMocks(t *testing.T) {
 	countWorksByAuthorAndContestFn = func(authorID int, contestID int) (int64, error) {
 		return 0, nil
 	}
+	resolveFlowChainForExecutionFn = nil
 
 	getUploadFilePermissionFn = func(workID int) (int, int, error) { return 1, 2, nil }
 	runTrackHookFn = func(scope string, eventKey string, trackID int, payload map[string]any) (scriptflow.ChainResult, error) {
 		return scriptflow.ChainResult{Allowed: true}, nil
 	}
 	patchWorkInfosFn = func(workID int, patch map[string]any) error { return nil }
+	getSubmissionByWorkIDFn = func(work *model.Work) error {
+		switch work.WorkID {
+		case 404:
+			return errors.New("record not found")
+		case 500:
+			return errors.New("db down")
+		case 403:
+			work.AuthorID = 2
+			work.TrackID = 2
+			work.WorkID = 403
+			return nil
+		default:
+			work.AuthorID = 1
+			work.TrackID = 2
+			if work.WorkID == 0 {
+				work.WorkID = 10
+			}
+			return nil
+		}
+	}
+	downloadDir := t.TempDir()
+	resolveSubmissionFilePathFn = func(work model.Work) (string, error) {
+		switch work.WorkID {
+		case 999:
+			return "", os.ErrNotExist
+		case 998:
+			return "", errors.New("resolve fail")
+		}
+		filePath := filepath.Join(downloadDir, strconv.Itoa(work.WorkID)+".docx")
+		if err := os.WriteFile(filePath, []byte("download-content"), 0o644); err != nil {
+			return "", err
+		}
+		return filePath, nil
+	}
+	computeFileSHA256Fn = computeFileSHA256
 	newDocumentConverterFn = func() document.Converter { return fakeConverter{} }
 }
 
@@ -282,6 +338,17 @@ func TestSubmissionRoutesSmokeSuccess(t *testing.T) {
 		t.Fatalf("unexpected file upload code: %d body=%s", code, fileResp.Body.String())
 	}
 
+	downloadResp := doJSONRequest(router, http.MethodGet, "/api/v1/author/submission/file/10", "Bearer author", nil)
+	if downloadResp.Code != http.StatusOK {
+		t.Fatalf("unexpected download status code: %d", downloadResp.Code)
+	}
+	if len(downloadResp.Body.Bytes()) == 0 {
+		t.Fatal("download should return file body")
+	}
+	if downloadResp.Header().Get("X-File-SHA256") == "" {
+		t.Fatal("download should include X-File-SHA256 header")
+	}
+
 	savedPath := filepath.Join(tmp, "submissions", "2", "1", "10.docx")
 	if _, err := os.Stat(savedPath); err != nil {
 		t.Fatalf("expected saved docx file: %v", err)
@@ -328,8 +395,8 @@ func TestSaveSubmissionFileDocConversionAndPatch(t *testing.T) {
 	if code := decodeRespCode(t, w.Body.Bytes()); code != 200 {
 		t.Fatalf("upload doc should success, got code=%d body=%s", code, w.Body.String())
 	}
-	if patchCalls != 2 {
-		t.Fatalf("expected patch called twice(pre+post), got %d", patchCalls)
+	if patchCalls != 3 {
+		t.Fatalf("expected patch called three times(pre+integrity+post), got %d", patchCalls)
 	}
 
 	docxPath := filepath.Join(tmp, "submissions", "2", "1", "11.docx")
@@ -338,6 +405,44 @@ func TestSaveSubmissionFileDocConversionAndPatch(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "submissions", "2", "1", "11.doc")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("temp doc should be removed, stat err=%v", err)
+	}
+}
+
+func TestGetSubmissionFileErrorPaths(t *testing.T) {
+	setupSubmissionRouteMocks(t)
+	router := buildSubmissionRouter()
+
+	w := doJSONRequest(router, http.MethodGet, "/api/v1/author/submission/file/bad", "Bearer author", nil)
+	if code := decodeRespCode(t, w.Body.Bytes()); code != 400 {
+		t.Fatalf("expected 400 for bad submission_id, got %d", code)
+	}
+
+	w = doJSONRequest(router, http.MethodGet, "/api/v1/author/submission/file/404", "Bearer author", nil)
+	if code := decodeRespCode(t, w.Body.Bytes()); code != 404 {
+		t.Fatalf("expected 404 for missing submission, got %d", code)
+	}
+
+	w = doJSONRequest(router, http.MethodGet, "/api/v1/author/submission/file/403", "Bearer author", nil)
+	if code := decodeRespCode(t, w.Body.Bytes()); code != 403 {
+		t.Fatalf("expected 403 for ownership violation, got %d", code)
+	}
+
+	w = doJSONRequest(router, http.MethodGet, "/api/v1/author/submission/file/999", "Bearer author", nil)
+	if code := decodeRespCode(t, w.Body.Bytes()); code != 404 {
+		t.Fatalf("expected 404 for missing file, got %d", code)
+	}
+
+	w = doJSONRequest(router, http.MethodGet, "/api/v1/author/submission/file/998", "Bearer author", nil)
+	if code := decodeRespCode(t, w.Body.Bytes()); code != 500 {
+		t.Fatalf("expected 500 for resolve file error, got %d", code)
+	}
+
+	computeFileSHA256Fn = func(filePath string) (string, int64, error) {
+		return "", 0, errors.New("hash fail")
+	}
+	w = doJSONRequest(router, http.MethodGet, "/api/v1/author/submission/file/10", "Bearer author", nil)
+	if code := decodeRespCode(t, w.Body.Bytes()); code != 500 {
+		t.Fatalf("expected 500 for hash compute error, got %d", code)
 	}
 }
 
@@ -512,6 +617,19 @@ func TestSaveSubmissionFileErrorPaths(t *testing.T) {
 		t.Fatalf("expected 400, got %d", code)
 	}
 
+	w = doMultipartRequest(
+		router,
+		"/api/v1/author/submission/file",
+		"Bearer author",
+		map[string]string{"work_id": "1", "file_hash": "bad-hash"},
+		"article_file",
+		"a.docx",
+		[]byte("x"),
+	)
+	if code := decodeRespCode(t, w.Body.Bytes()); code != 400 {
+		t.Fatalf("expected 400 for malformed file_hash, got %d", code)
+	}
+
 	getUploadFilePermissionFn = func(workID int) (int, int, error) { return 0, 0, errors.New("perm fail") }
 	w = doMultipartRequest(router, "/api/v1/author/submission/file", "Bearer author", map[string]string{"work_id": "1"}, "article_file", "a.docx", []byte("x"))
 	if code := decodeRespCode(t, w.Body.Bytes()); code != 500 {
@@ -583,6 +701,24 @@ func TestSaveSubmissionFileErrorPaths(t *testing.T) {
 	w = doMultipartRequest(router, "/api/v1/author/submission/file", "Bearer author", map[string]string{"work_id": "5"}, "article_file", "a.doc", []byte("x"))
 	if code := decodeRespCode(t, w.Body.Bytes()); code != 500 {
 		t.Fatalf("expected 500, got %d", code)
+	}
+
+	newDocumentConverterFn = func() document.Converter { return fakeConverter{} }
+	mismatchHash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	w = doMultipartRequest(
+		router,
+		"/api/v1/author/submission/file",
+		"Bearer author",
+		map[string]string{"work_id": "6", "file_hash": mismatchHash},
+		"article_file",
+		"a.docx",
+		[]byte("x"),
+	)
+	if code := decodeRespCode(t, w.Body.Bytes()); code != 400 {
+		t.Fatalf("expected 400 for hash mismatch, got %d", code)
+	}
+	if _, statErr := os.Stat(filepath.Join(tmp, "submissions", "2", "1", "6.docx")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("hash mismatch should remove uploaded file, stat err=%v", statErr)
 	}
 
 	newDocumentConverterFn = func() document.Converter { return fakeConverter{} }

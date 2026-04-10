@@ -3,8 +3,8 @@
 CREATE TABLE contests (
     contest_id SERIAL PRIMARY KEY,
     contest_name VARCHAR(255) NOT NULL,
-    contest_start_date DATE NOT NULL,
-    contest_end_date DATE NOT NULL,
+    contest_start_date TIMESTAMP NOT NULL,
+    contest_end_date TIMESTAMP NOT NULL,
     contest_introduction TEXT
 );
 
