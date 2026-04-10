@@ -36,7 +36,6 @@ var (
 	setUploadFilePermissionFn      = redis.SetUploadFilePermission
 	getStartAndEndDateFn           = redis.GetStartAndEndDate
 	resolveFlowForExecutionFn      = pgsql.ResolveFlowForExecution
-	resolveFlowChainForExecutionFn = pgsql.ResolveFlowChainForExecution
 
 	executeScriptChainFn = func(chain scriptflow.ChainConfig, input scriptflow.ExecuteInput) (scriptflow.ChainResult, error) {
 		executor := scriptflow.NewExecutor(".", 5*time.Second, []string{"python3", "python", "bash", "sh", "node"})
@@ -134,11 +133,11 @@ func submissionWorkSrc(work *model.Work) error {
 		return uerr.ExtractError(err)
 	}
 
-	hookResult, err := runTrackHookWithContest(
+	allowed, err := checkHookAllowedAndApplyPatch(
 		scriptflow.ScopeSubmission,
 		scriptflow.EventSubmissionPre,
-		track.ContestID,
 		work.TrackID,
+		work,
 		map[string]any{
 			"phase":         "create",
 			"authorID":      work.AuthorID,
@@ -147,31 +146,16 @@ func submissionWorkSrc(work *model.Work) error {
 			"existingCount": count,
 			"work":          toWorkMap(*work),
 		},
+		"",
 	)
 	if err != nil {
 		return err
 	}
-	if !hookResult.Allowed {
-		if hookResult.Reason != "" {
-			return errors.New(hookResult.Reason)
-		}
+	if !allowed {
 		return errors.New("submission blocked by script flow")
 	}
-	mergeWorkInfos(work, hookResult.Patch)
 
-	err = submissionWorkFn(work)
-	if err != nil {
-		log.Logger.Warn("Submission work failed: " + err.Error())
-		return uerr.ExtractError(err)
-	}
-
-	err = setUploadFilePermissionFn(work.AuthorID, work.TrackID, work.WorkID)
-	if err != nil {
-		log.Logger.Warn("Set upload file permission failed: " + err.Error())
-		return uerr.ExtractError(err)
-	}
-
-	return nil
+	return performWorkOperationWithPermission(work, submissionWorkFn, "Submission work")
 }
 
 func updateSubmissionSrc(work *model.Work) error {
@@ -179,10 +163,11 @@ func updateSubmissionSrc(work *model.Work) error {
 		return err
 	}
 
-	hookResult, err := runTrackHook(
+	allowed, err := checkHookAllowedAndApplyPatch(
 		scriptflow.ScopeSubmission,
 		scriptflow.EventSubmissionUpdatePre,
 		work.TrackID,
+		work,
 		map[string]any{
 			"phase":    "update",
 			"authorID": work.AuthorID,
@@ -190,38 +175,24 @@ func updateSubmissionSrc(work *model.Work) error {
 			"workID":   work.WorkID,
 			"work":     toWorkMap(*work),
 		},
+		"update",
 	)
 	if err != nil {
 		return err
 	}
-	if !hookResult.Allowed {
-		if hookResult.Reason != "" {
-			return errors.New(hookResult.Reason)
-		}
+	if !allowed {
 		return errors.New("submission update blocked by script flow")
 	}
-	mergeWorkInfos(work, hookResult.Patch)
 
-	err = updateWorkFn(work)
-	if err != nil {
-		log.Logger.Warn("Update submission failed: " + err.Error())
-		return uerr.ExtractError(err)
-	}
-
-	err = setUploadFilePermissionFn(work.AuthorID, work.TrackID, work.WorkID)
-	if err != nil {
-		log.Logger.Warn("Set upload file permission failed: " + err.Error())
-		return uerr.ExtractError(err)
-	}
-
-	return nil
+	return performWorkOperationWithPermission(work, updateWorkFn, "Update submission")
 }
 
 func deleteSubmissionSrc(work *model.Work) error {
-	hookResult, err := runTrackHook(
+	allowed, err := checkHookAllowedAndApplyPatch(
 		scriptflow.ScopeSubmission,
 		scriptflow.EventSubmissionDeletePre,
 		work.TrackID,
+		work,
 		map[string]any{
 			"phase":    "delete",
 			"authorID": work.AuthorID,
@@ -229,14 +200,12 @@ func deleteSubmissionSrc(work *model.Work) error {
 			"workID":   work.WorkID,
 			"work":     toWorkMap(*work),
 		},
+		"delete",
 	)
 	if err != nil {
 		return err
 	}
-	if !hookResult.Allowed {
-		if hookResult.Reason != "" {
-			return errors.New(hookResult.Reason)
-		}
+	if !allowed {
 		return errors.New("submission delete blocked by script flow")
 	}
 
@@ -279,66 +248,41 @@ func checkSubmissionTimeValid(trackID int) error {
 	}
 }
 
-func runTrackHook(scope string, eventKey string, trackID int, payload map[string]any) (scriptflow.ChainResult, error) {
-	track, err := getTrackByIDFn(trackID)
+// checkHookAllowedAndApplyPatch 执行Hook检查，如果允许则应用Patch到work对象
+// 返回true表示通过检查，false表示被Hook拒绝
+func checkHookAllowedAndApplyPatch(scope string, eventKey string, trackID int, work *model.Work, payload map[string]any, blockedMessageKey string) (bool, error) {
+	hookResult, err := runTrackHook(scope, eventKey, trackID, payload)
 	if err != nil {
-		log.Logger.Warn("Get track by id failed in runTrackHook: " + err.Error())
-		return scriptflow.ChainResult{Allowed: false}, uerr.ExtractError(err)
+		return false, err
 	}
-
-	return runTrackHookWithContest(scope, eventKey, track.ContestID, trackID, payload)
+	if !hookResult.Allowed {
+		if hookResult.Reason != "" {
+			return false, errors.New(hookResult.Reason)
+		}
+		return false, errors.New("submission " + blockedMessageKey + " blocked by script flow")
+	}
+	mergeWorkInfos(work, hookResult.Patch)
+	return true, nil
 }
 
-func runTrackHookWithContest(scope string, eventKey string, contestID int, trackID int, payload map[string]any) (scriptflow.ChainResult, error) {
-	if resolveFlowChainForExecutionFn != nil {
-		chains, err := resolveFlowChainForExecutionFn(scope, eventKey, contestID, trackID)
-		if err != nil {
-			if errors.Is(err, pgsql.ErrFlowNotMounted) {
-				return scriptflow.ChainResult{Allowed: true}, nil
-			}
-			log.Logger.Warn("Resolve script flow chain failed: " + err.Error())
-			return scriptflow.ChainResult{Allowed: false}, uerr.ExtractError(err)
-		}
-
-		merged := scriptflow.ChainResult{Allowed: true, Patch: map[string]any{}}
-		for _, chain := range chains {
-			result, err := executeResolvedFlow(scope, eventKey, trackID, chain.Flow, chain.Steps, payload)
-			if err != nil {
-				if errors.Is(err, scriptflow.ErrExecutionBlocked) {
-					merged.Allowed = false
-					merged.Reason = result.Reason
-					mergeWorkInfosResult(merged.Patch, result.Patch)
-					merged.Steps = append(merged.Steps, result.Steps...)
-					if len(merged.Patch) == 0 {
-						merged.Patch = nil
-					}
-					return merged, nil
-				}
-				return result, err
-			}
-
-			mergeWorkInfosResult(merged.Patch, result.Patch)
-			merged.Steps = append(merged.Steps, result.Steps...)
-			if !result.Allowed {
-				merged.Allowed = false
-				merged.Reason = result.Reason
-				if len(merged.Patch) == 0 {
-					merged.Patch = nil
-				}
-				return merged, nil
-			}
-		}
-
-		if len(merged.Patch) == 0 {
-			merged.Patch = nil
-		}
-		return merged, nil
+// performWorkOperationWithPermission 执行工作操作（如提交、更新）并设置文件上传权限
+func performWorkOperationWithPermission(work *model.Work, operation func(*model.Work) error, opName string) error {
+	err := operation(work)
+	if err != nil {
+		log.Logger.Warn(opName + " failed: " + err.Error())
+		return uerr.ExtractError(err)
 	}
 
-	return runTrackHookLegacy(scope, eventKey, trackID, payload)
+	err = setUploadFilePermissionFn(work.AuthorID, work.TrackID, work.WorkID)
+	if err != nil {
+		log.Logger.Warn("Set upload file permission failed: " + err.Error())
+		return uerr.ExtractError(err)
+	}
+
+	return nil
 }
 
-func runTrackHookLegacy(scope string, eventKey string, trackID int, payload map[string]any) (scriptflow.ChainResult, error) {
+func runTrackHook(scope string, eventKey string, trackID int, payload map[string]any) (scriptflow.ChainResult, error) {
 	flow, steps, err := resolveFlowForExecutionFn(scope, eventKey, "track", trackID)
 	if err != nil {
 		if errors.Is(err, pgsql.ErrFlowNotMounted) {
@@ -392,62 +336,6 @@ func runTrackHookLegacy(scope string, eventKey string, trackID int, payload map[
 	}
 
 	return result, nil
-}
-
-func executeResolvedFlow(scope string, eventKey string, trackID int, flow model.ScriptFlow, steps []pgsql.ResolvedFlowStep, payload map[string]any) (scriptflow.ChainResult, error) {
-	chain := scriptflow.ChainConfig{
-		Scope:    scope,
-		EventKey: eventKey,
-		FlowKey:  flow.FlowKey,
-		Steps:    make([]scriptflow.StepConfig, 0, len(steps)),
-	}
-	for _, step := range steps {
-		timeout := 5 * time.Second
-		if step.Step.TimeoutMs > 0 {
-			timeout = time.Duration(step.Step.TimeoutMs) * time.Millisecond
-		}
-		strategy := strings.TrimSpace(step.Step.FailureStrategy)
-		if strategy == "" {
-			strategy = "fail_close"
-		}
-		chain.Steps = append(chain.Steps, scriptflow.StepConfig{
-			StepName:        step.Step.StepName,
-			Interpreter:     step.Script.Interpreter,
-			ScriptPath:      filepath.ToSlash(step.Version.RelativePath),
-			Timeout:         timeout,
-			FailureStrategy: strategy,
-			InputTemplate:   step.Step.InputTemplate,
-		})
-	}
-
-	result, err := executeScriptChainFn(chain, scriptflow.ExecuteInput{
-		Scope:    scope,
-		EventKey: eventKey,
-		FlowKey:  flow.FlowKey,
-		TraceID:  fmt.Sprintf("%d", time.Now().UnixNano()),
-		NowUnix:  time.Now().Unix(),
-		Context: map[string]any{
-			"trackID": trackID,
-		},
-		Payload: payload,
-	})
-	if err != nil {
-		if errors.Is(err, scriptflow.ErrExecutionBlocked) {
-			return result, err
-		}
-		return result, err
-	}
-
-	return result, nil
-}
-
-func mergeWorkInfosResult(dst map[string]any, src map[string]any) {
-	if dst == nil || len(src) == 0 {
-		return
-	}
-	for k, v := range src {
-		dst[k] = v
-	}
 }
 
 func mergeWorkInfos(work *model.Work, patch map[string]any) {

@@ -14,7 +14,206 @@ import (
 	"time"
 )
 
-func TestSubmissionWorkSrcWithHookPatch(t *testing.T) {
+// TestCheckHookAllowedAndApplyPatchSuccess 测试Hook通过且应用Patch成功
+func TestCheckHookAllowedAndApplyPatchSuccess(t *testing.T) {
+	setupSubmissionRouteMocks(t)
+
+	resolveFlowForExecutionFn = func(scope string, eventKey string, targetType string, targetID int) (model.ScriptFlow, []pgsql.ResolvedFlowStep, error) {
+		return model.ScriptFlow{FlowID: 1, FlowKey: "flow"}, []pgsql.ResolvedFlowStep{{
+			Step:    model.FlowStep{StepID: 1, StepName: "allow", TimeoutMs: 1000, FailureStrategy: "fail_close"},
+			Script:  model.ScriptDefinition{ScriptID: 1, ScriptKey: "allow", Interpreter: "python3", IsEnabled: true},
+			Version: model.ScriptVersion{VersionID: 1, ScriptID: 1, RelativePath: "scripts/allow/v1/allow.py", IsActive: true},
+		}}, nil
+	}
+	executeScriptChainFn = func(chain scriptflow.ChainConfig, input scriptflow.ExecuteInput) (scriptflow.ChainResult, error) {
+		return scriptflow.ChainResult{Allowed: true, Patch: map[string]any{"score": 100}}, nil
+	}
+
+	work := &model.Work{
+		WorkID: 1, AuthorID: 1, TrackID: 2,
+		WorkInfos: map[string]any{"existing": "data"},
+	}
+	allowed, err := checkHookAllowedAndApplyPatch(
+		scriptflow.ScopeSubmission,
+		scriptflow.EventSubmissionPre,
+		2,
+		work,
+		map[string]any{"test": "data"},
+		"",
+	)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !allowed {
+		t.Fatal("expected allowed=true")
+	}
+	if work.WorkInfos["score"] != 100 {
+		t.Fatalf("expected patch applied, got %+v", work.WorkInfos)
+	}
+}
+
+// TestCheckHookAllowedAndApplyPatchBlocked 测试Hook被拒绝
+func TestCheckHookAllowedAndApplyPatchBlocked(t *testing.T) {
+	setupSubmissionRouteMocks(t)
+
+	resolveFlowForExecutionFn = func(scope string, eventKey string, targetType string, targetID int) (model.ScriptFlow, []pgsql.ResolvedFlowStep, error) {
+		return model.ScriptFlow{FlowID: 1, FlowKey: "flow"}, []pgsql.ResolvedFlowStep{{
+			Step:    model.FlowStep{StepID: 1, StepName: "deny", TimeoutMs: 1000, FailureStrategy: "fail_close"},
+			Script:  model.ScriptDefinition{ScriptID: 1, ScriptKey: "deny", Interpreter: "python3", IsEnabled: true},
+			Version: model.ScriptVersion{VersionID: 1, ScriptID: 1, RelativePath: "scripts/deny/v1/deny.py", IsActive: true},
+		}}, nil
+	}
+	executeScriptChainFn = func(chain scriptflow.ChainConfig, input scriptflow.ExecuteInput) (scriptflow.ChainResult, error) {
+		return scriptflow.ChainResult{Allowed: false, Reason: "quota exceeded"}, scriptflow.ErrExecutionBlocked
+	}
+
+	allowed, err := checkHookAllowedAndApplyPatch(
+		scriptflow.ScopeSubmission,
+		scriptflow.EventSubmissionPre,
+		2,
+		&model.Work{WorkID: 1, AuthorID: 1, TrackID: 2},
+		map[string]any{},
+		"",
+	)
+	if err == nil {
+		t.Fatal("expected error when hook is rejected")
+	}
+	if allowed {
+		t.Fatal("expected allowed=false")
+	}
+	if !strings.Contains(err.Error(), "quota exceeded") {
+		t.Fatalf("expected custom reason in error, got %v", err)
+	}
+}
+
+// TestCheckHookAllowedAndApplyPatchBlockedNoReason 测试Hook被拒绝但无自定义原因
+func TestCheckHookAllowedAndApplyPatchBlockedNoReason(t *testing.T) {
+	setupSubmissionRouteMocks(t)
+
+	resolveFlowForExecutionFn = func(scope string, eventKey string, targetType string, targetID int) (model.ScriptFlow, []pgsql.ResolvedFlowStep, error) {
+		return model.ScriptFlow{FlowID: 1, FlowKey: "flow"}, []pgsql.ResolvedFlowStep{{
+			Step:    model.FlowStep{StepID: 1, StepName: "deny", TimeoutMs: 1000, FailureStrategy: "fail_close"},
+			Script:  model.ScriptDefinition{ScriptID: 1, ScriptKey: "deny", Interpreter: "python3", IsEnabled: true},
+			Version: model.ScriptVersion{VersionID: 1, ScriptID: 1, RelativePath: "scripts/deny/v1/deny.py", IsActive: true},
+		}}, nil
+	}
+	executeScriptChainFn = func(chain scriptflow.ChainConfig, input scriptflow.ExecuteInput) (scriptflow.ChainResult, error) {
+		return scriptflow.ChainResult{Allowed: false}, scriptflow.ErrExecutionBlocked
+	}
+
+	allowed, err := checkHookAllowedAndApplyPatch(
+		scriptflow.ScopeSubmission,
+		scriptflow.EventSubmissionPre,
+		2,
+		&model.Work{WorkID: 1, AuthorID: 1, TrackID: 2},
+		map[string]any{},
+		"update",
+	)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if allowed {
+		t.Fatal("expected allowed=false")
+	}
+	if !strings.Contains(err.Error(), "submission update blocked by script flow") {
+		t.Fatalf("expected generic blocked message, got %v", err)
+	}
+}
+
+// TestCheckHookAllowedAndApplyPatchFlowNotMounted 测试Hook流未挂载
+func TestCheckHookAllowedAndApplyPatchFlowNotMounted(t *testing.T) {
+	setupSubmissionRouteMocks(t)
+
+	resolveFlowForExecutionFn = func(scope string, eventKey string, targetType string, targetID int) (model.ScriptFlow, []pgsql.ResolvedFlowStep, error) {
+		return model.ScriptFlow{}, nil, pgsql.ErrFlowNotMounted
+	}
+
+	work := &model.Work{WorkID: 1, WorkInfos: map[string]any{}}
+	allowed, err := checkHookAllowedAndApplyPatch(
+		scriptflow.ScopeSubmission,
+		scriptflow.EventSubmissionPre,
+		2,
+		work,
+		map[string]any{},
+		"",
+	)
+	if err != nil {
+		t.Fatalf("expected no error for unmounted flow, got %v", err)
+	}
+	if !allowed {
+		t.Fatal("expected allowed=true when flow not mounted")
+	}
+}
+
+// TestPerformWorkOperationWithPermissionSuccess 测试工作操作成功
+func TestPerformWorkOperationWithPermissionSuccess(t *testing.T) {
+	setupSubmissionRouteMocks(t)
+
+	operationCalled := false
+	submissionWorkFn = func(work *model.Work) error {
+		operationCalled = true
+		work.WorkID = 999
+		return nil
+	}
+
+	permissionCalled := false
+	setUploadFilePermissionFn = func(authorID int, trackID int, workID int) error {
+		permissionCalled = true
+		if workID != 999 {
+			t.Fatalf("unexpected workID=%d", workID)
+		}
+		return nil
+	}
+
+	work := &model.Work{AuthorID: 1, TrackID: 2}
+	err := performWorkOperationWithPermission(work, submissionWorkFn, "Test operation")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !operationCalled {
+		t.Fatal("operation should be called")
+	}
+	if !permissionCalled {
+		t.Fatal("permission setter should be called")
+	}
+}
+
+// TestPerformWorkOperationWithPermissionOperationFails 测试操作失败
+func TestPerformWorkOperationWithPermissionOperationFails(t *testing.T) {
+	setupSubmissionRouteMocks(t)
+
+	submissionWorkFn = func(work *model.Work) error {
+		return errors.New("operation failed")
+	}
+
+	work := &model.Work{AuthorID: 1, TrackID: 2}
+	err := performWorkOperationWithPermission(work, submissionWorkFn, "Test operation")
+	if err == nil {
+		t.Fatal("expected error when operation fails")
+	}
+}
+
+// TestPerformWorkOperationWithPermissionPermissionFails 测试权限设置失败
+func TestPerformWorkOperationWithPermissionPermissionFails(t *testing.T) {
+	setupSubmissionRouteMocks(t)
+
+	submissionWorkFn = func(work *model.Work) error {
+		work.WorkID = 123
+		return nil
+	}
+	setUploadFilePermissionFn = func(authorID int, trackID int, workID int) error {
+		return errors.New("permission cache failed")
+	}
+
+	work := &model.Work{AuthorID: 1, TrackID: 2}
+	err := performWorkOperationWithPermission(work, submissionWorkFn, "Test operation")
+	if err == nil {
+		t.Fatal("expected error when permission setting fails")
+	}
+}
+
+// TestSubmissionWorkSrcWithHookPatchIntegration 测试Hook Patch集成
+func TestSubmissionWorkSrcWithHookPatchIntegration(t *testing.T) {
 	setupSubmissionRouteMocks(t)
 
 	getStartAndEndDateFn = func(trackID int) (int64, int64, error) {
@@ -262,3 +461,72 @@ func TestRemoveSubmissionFilesErrorBranches(t *testing.T) {
 		t.Fatal("removeSubmissionFiles should fail on readDir error")
 	}
 }
+
+// TestUpdateSubmissionSrcWithHookPatchIntegration 测试Update操作的Hook Patch集成
+func TestUpdateSubmissionSrcWithHookPatchIntegration(t *testing.T) {
+	setupSubmissionRouteMocks(t)
+
+	getStartAndEndDateFn = func(trackID int) (int64, int64, error) {
+		now := time.Now().Unix()
+		return now - 100, now + 100, nil
+	}
+	resolveFlowForExecutionFn = func(scope string, eventKey string, targetType string, targetID int) (model.ScriptFlow, []pgsql.ResolvedFlowStep, error) {
+		return model.ScriptFlow{FlowID: 1, FlowKey: "flow"}, []pgsql.ResolvedFlowStep{{
+			Step:    model.FlowStep{StepID: 1, StepName: "update", TimeoutMs: 1000, FailureStrategy: "fail_close"},
+			Script:  model.ScriptDefinition{ScriptID: 1, ScriptKey: "update", Interpreter: "python3", IsEnabled: true},
+			Version: model.ScriptVersion{VersionID: 1, ScriptID: 1, RelativePath: "scripts/update/v1/hook.py", IsActive: true},
+		}}, nil
+	}
+	executeScriptChainFn = func(chain scriptflow.ChainConfig, input scriptflow.ExecuteInput) (scriptflow.ChainResult, error) {
+		return scriptflow.ChainResult{Allowed: true, Patch: map[string]any{"updated": true}}, nil
+	}
+
+	permissionCalled := false
+	updateWorkFn = func(work *model.Work) error { return nil }
+	setUploadFilePermissionFn = func(authorID int, trackID int, workID int) error {
+		permissionCalled = true
+		return nil
+	}
+
+	work := &model.Work{
+		WorkID:    1,
+		AuthorID:  1,
+		TrackID:   2,
+		WorkTitle: "updated",
+	}
+	if err := updateSubmissionSrc(work); err != nil {
+		t.Fatalf("updateSubmissionSrc failed: %v", err)
+	}
+
+	if !permissionCalled {
+		t.Fatal("upload permission should be set after update")
+	}
+	if work.WorkInfos["updated"] != true {
+		t.Fatalf("hook patch should be applied")
+	}
+}
+
+// TestDeleteSubmissionSrcWithHookSuccess 测试Delete操作成功完成
+func TestDeleteSubmissionSrcWithHookSuccess(t *testing.T) {
+	setupSubmissionRouteMocks(t)
+
+	resolveFlowForExecutionFn = func(scope string, eventKey string, targetType string, targetID int) (model.ScriptFlow, []pgsql.ResolvedFlowStep, error) {
+		return model.ScriptFlow{FlowID: 1, FlowKey: "flow"}, []pgsql.ResolvedFlowStep{{
+			Step:    model.FlowStep{StepID: 1, StepName: "delete", TimeoutMs: 1000, FailureStrategy: "fail_close"},
+			Script:  model.ScriptDefinition{ScriptID: 1, ScriptKey: "delete", Interpreter: "python3", IsEnabled: true},
+			Version: model.ScriptVersion{VersionID: 1, ScriptID: 1, RelativePath: "scripts/delete/v1/hook.py", IsActive: true},
+		}}, nil
+	}
+	executeScriptChainFn = func(chain scriptflow.ChainConfig, input scriptflow.ExecuteInput) (scriptflow.ChainResult, error) {
+		return scriptflow.ChainResult{Allowed: true}, nil
+	}
+
+	deleteWorkFn = func(work *model.Work) error { return nil }
+	readDirFn = func(path string) ([]fs.DirEntry, error) { return nil, os.ErrNotExist }
+
+	work := &model.Work{WorkID: 5, AuthorID: 2, TrackID: 3}
+	if err := deleteSubmissionSrc(work); err != nil {
+		t.Fatalf("deleteSubmissionSrc should succeed, got %v", err)
+	}
+}
+

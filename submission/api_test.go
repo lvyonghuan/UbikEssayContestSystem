@@ -85,7 +85,6 @@ func backupSubmissionHooks(t *testing.T) {
 	origSetUploadFilePermissionFn := setUploadFilePermissionFn
 	origGetStartAndEndDateFn := getStartAndEndDateFn
 	origResolveFlowForExecutionFn := resolveFlowForExecutionFn
-	origResolveFlowChainForExecutionFn := resolveFlowChainForExecutionFn
 	origExecuteScriptChainFn := executeScriptChainFn
 	origReadDirFn := readDirFn
 	origRemoveFn := removeFn
@@ -127,7 +126,6 @@ func backupSubmissionHooks(t *testing.T) {
 		setUploadFilePermissionFn = origSetUploadFilePermissionFn
 		getStartAndEndDateFn = origGetStartAndEndDateFn
 		resolveFlowForExecutionFn = origResolveFlowForExecutionFn
-		resolveFlowChainForExecutionFn = origResolveFlowChainForExecutionFn
 		executeScriptChainFn = origExecuteScriptChainFn
 		readDirFn = origReadDirFn
 		removeFn = origRemoveFn
@@ -243,7 +241,6 @@ func setupSubmissionRouteMocks(t *testing.T) {
 	countWorksByAuthorAndContestFn = func(authorID int, contestID int) (int64, error) {
 		return 0, nil
 	}
-	resolveFlowChainForExecutionFn = nil
 
 	getUploadFilePermissionFn = func(workID int) (int, int, error) { return 1, 2, nil }
 	runTrackHookFn = func(scope string, eventKey string, trackID int, payload map[string]any) (scriptflow.ChainResult, error) {
