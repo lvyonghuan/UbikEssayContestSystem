@@ -15,6 +15,7 @@ DROP TABLE IF EXISTS
     permissions,
     review_results,
     reviews,
+    review_event_judges,
     review_events,
     judges,
     works,

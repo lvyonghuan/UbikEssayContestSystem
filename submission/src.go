@@ -454,7 +454,7 @@ func normalizeStatusValue(value any) (string, bool) {
 }
 
 func removeSubmissionFiles(work model.Work) error {
-	dstDir := filepath.Join(_const.FileRootPath, strconv.Itoa(work.TrackID), strconv.Itoa(work.AuthorID))
+	dstDir := filepath.Join(_const.SubmissionFileRootPath, strconv.Itoa(work.TrackID), strconv.Itoa(work.AuthorID))
 	entries, err := readDirFn(dstDir)
 	if err != nil {
 		if os.IsNotExist(err) {

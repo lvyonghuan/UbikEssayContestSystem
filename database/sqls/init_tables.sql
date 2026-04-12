@@ -50,8 +50,15 @@ CREATE TABLE review_events (
     work_status VARCHAR(128) NOT NULL DEFAULT 'reviewing',
     start_time TIMESTAMP NOT NULL,
     end_time TIMESTAMP NOT NULL,
-    judge_ids INT[],
     FOREIGN KEY (track_id) REFERENCES tracks(track_id) ON DELETE SET NULL
+);
+
+CREATE TABLE review_event_judges (
+    event_id INT NOT NULL,
+    judge_id INT NOT NULL,
+    PRIMARY KEY (event_id, judge_id),
+    FOREIGN KEY (event_id) REFERENCES review_events(event_id) ON DELETE CASCADE,
+    FOREIGN KEY (judge_id) REFERENCES judges(judge_id) ON DELETE CASCADE
 );
 
 CREATE TABLE reviews (

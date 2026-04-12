@@ -39,7 +39,7 @@ func BuildSubmissionRouter() *gin.Engine {
 func buildSubmissionRouter() *gin.Engine {
 	r := gin.Default()
 
-	// 鎸傝浇swagger璺敱
+	// 挂载swagger文档路由
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler, ginSwagger.InstanceName("Submission")))
 	v1 := r.Group("/api/v1")
 	{

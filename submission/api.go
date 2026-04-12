@@ -376,7 +376,7 @@ func saveSubmissionFile(c *gin.Context) {
 		}
 	}
 
-	dstDir := filepath.Join(_const.FileRootPath, strconv.Itoa(trackID), strconv.Itoa(authorID))
+	dstDir := filepath.Join(_const.SubmissionFileRootPath, strconv.Itoa(trackID), strconv.Itoa(authorID))
 	if err := os.MkdirAll(dstDir, os.ModePerm); err != nil {
 		response.RespError(c, 500, err.Error())
 		return
@@ -549,7 +549,7 @@ func cleanupSubmissionFileVariants(dstDir string, workID int) error {
 }
 
 func resolveSubmissionFilePath(work model.Work) (string, error) {
-	dstDir := filepath.Join(_const.FileRootPath, strconv.Itoa(work.TrackID), strconv.Itoa(work.AuthorID))
+	dstDir := filepath.Join(_const.SubmissionFileRootPath, strconv.Itoa(work.TrackID), strconv.Itoa(work.AuthorID))
 	entries, err := os.ReadDir(dstDir)
 	if err != nil {
 		if os.IsNotExist(err) {

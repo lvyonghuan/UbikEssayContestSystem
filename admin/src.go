@@ -349,7 +349,7 @@ func getWorkFilePathSrc(workID int) (string, error) {
 }
 
 func resolveWorkFilePath(work model.Work) (string, error) {
-	dstDir := filepath.Join(_const.FileRootPath, strconv.Itoa(work.TrackID), strconv.Itoa(work.AuthorID))
+	dstDir := filepath.Join(_const.SubmissionFileRootPath, strconv.Itoa(work.TrackID), strconv.Itoa(work.AuthorID))
 	entries, err := readDirFn(dstDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -442,7 +442,7 @@ func deleteWorkSrc(adminID, workID int) error {
 }
 
 func deleteWorkFiles(work model.Work) error {
-	dstDir := filepath.Join(_const.FileRootPath, strconv.Itoa(work.TrackID), strconv.Itoa(work.AuthorID))
+	dstDir := filepath.Join(_const.SubmissionFileRootPath, strconv.Itoa(work.TrackID), strconv.Itoa(work.AuthorID))
 	prefix := strconv.Itoa(work.WorkID) + "."
 
 	entries, err := readDirFn(dstDir)
