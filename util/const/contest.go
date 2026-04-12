@@ -13,4 +13,5 @@ const (
 	RedisUploadPermissionPrefix = "upload_permission_"
 )
 
-const FileRootPath = "./submissions"
+const FileRootPath = "./files"
+const SubmissionFileRootPath = FileRootPath + "/submissions"
