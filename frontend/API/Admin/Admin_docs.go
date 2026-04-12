@@ -1880,6 +1880,12 @@ const docTemplateAdmin = `{
                     },
                     {
                         "type": "string",
+                        "description": "作品状态，可选",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "作品名，可选",
                         "name": "work_title",
                         "in": "query"
@@ -2478,6 +2484,9 @@ const docTemplateAdmin = `{
                 "workInfos": {
                     "type": "object",
                     "additionalProperties": {}
+                },
+                "workStatus": {
+                    "type": "string"
                 },
                 "workTitle": {
                     "type": "string"

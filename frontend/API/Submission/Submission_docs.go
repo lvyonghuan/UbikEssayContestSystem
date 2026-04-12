@@ -533,6 +533,9 @@ const docTemplateSubmission = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "workStatus": {
+                    "type": "string"
+                },
                 "workTitle": {
                     "type": "string"
                 }

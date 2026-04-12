@@ -369,16 +369,19 @@ func TestWorksSrcPaths(t *testing.T) {
 		t.Fatalf("getWorksByAuthorIDSrc failed: %v, %+v", err, works)
 	}
 
-	queryWorksFn = func(trackID *int, workTitle string, authorName string, offset int, limit int) ([]model.Work, error) {
+	queryWorksFn = func(trackID *int, workStatus string, workTitle string, authorName string, offset int, limit int) ([]model.Work, error) {
 		if trackID == nil || *trackID != 1 {
 			t.Fatalf("unexpected trackID input: %+v", trackID)
+		}
+		if workStatus != "reviewing" {
+			t.Fatalf("unexpected workStatus input: %s", workStatus)
 		}
 		if workTitle != "w" || authorName != "a" || offset != 2 || limit != 10 {
 			t.Fatalf("unexpected query args: %s %s %d %d", workTitle, authorName, offset, limit)
 		}
 		return []model.Work{{WorkID: 3}}, nil
 	}
-	works, err = queryWorksSrc(func() *int { v := 1; return &v }(), "w", "a", 2, 10)
+	works, err = queryWorksSrc(func() *int { v := 1; return &v }(), "reviewing", "w", "a", 2, 10)
 	if err != nil || len(works) != 1 || works[0].WorkID != 3 {
 		t.Fatalf("queryWorksSrc failed: %v, %+v", err, works)
 	}

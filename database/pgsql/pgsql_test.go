@@ -31,7 +31,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		`CREATE TABLE works (work_id INTEGER PRIMARY KEY AUTOINCREMENT, work_title TEXT, track_id INTEGER, author_id INTEGER, work_status TEXT DEFAULT 'submission_success', work_infos TEXT);`,
 		`CREATE TABLE judges (judge_id INTEGER PRIMARY KEY AUTOINCREMENT, judge_name TEXT, password TEXT);`,
 		`CREATE TABLE review_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT, track_id INTEGER, event_name TEXT, work_status TEXT DEFAULT 'reviewing', start_time TIMESTAMP, end_time TIMESTAMP);`,
-		`CREATE TABLE review_event_judges (event_id INTEGER NOT NULL, judge_id INTEGER NOT NULL, PRIMARY KEY (event_id, judge_id));`,
+		`CREATE TABLE review_event_judges (event_id INTEGER NOT NULL, judge_id INTEGER NOT NULL, deadline_at TIMESTAMP NULL, PRIMARY KEY (event_id, judge_id));`,
 		`CREATE TABLE script_definitions (script_id INTEGER PRIMARY KEY AUTOINCREMENT, script_key TEXT UNIQUE, script_name TEXT, interpreter TEXT, description TEXT, is_enabled BOOLEAN, meta TEXT, created_at DATETIME, updated_at DATETIME);`,
 		`CREATE TABLE script_versions (version_id INTEGER PRIMARY KEY AUTOINCREMENT, script_id INTEGER NOT NULL, version_num INTEGER NOT NULL, file_name TEXT NOT NULL, relative_path TEXT NOT NULL, checksum TEXT, is_active BOOLEAN, created_by INTEGER, created_at DATETIME, UNIQUE(script_id, version_num));`,
 		`CREATE TABLE script_flows (flow_id INTEGER PRIMARY KEY AUTOINCREMENT, flow_key TEXT UNIQUE, flow_name TEXT, description TEXT, is_enabled BOOLEAN, meta TEXT, created_at DATETIME, updated_at DATETIME);`,
@@ -149,7 +149,7 @@ func TestAdminAndSubmissionFunctions(t *testing.T) {
 	if err := db.Exec(`INSERT INTO authors (author_id, author_name, password, author_email) VALUES (1, 'author_a', 'p', 'author_a@example.com')`).Error; err != nil {
 		t.Fatalf("seed author for query works failed: %v", err)
 	}
-	queryWorks, err := QueryWorks(nil, "Work A", "author_a", 0, 20)
+	queryWorks, err := QueryWorks(nil, "", "Work A", "author_a", 0, 20)
 	if err != nil || len(queryWorks) != 1 {
 		t.Fatalf("QueryWorks failed: %v len=%d", err, len(queryWorks))
 	}
@@ -158,6 +158,14 @@ func TestAdminAndSubmissionFunctions(t *testing.T) {
 	}
 	if queryWorks[0].WorkStatus != "submission_success" {
 		t.Fatalf("QueryWorks should return work status, got %+v", queryWorks[0])
+	}
+
+	queryWorks, err = QueryWorks(nil, "submission_success", "", "", 0, 20)
+	if err != nil || len(queryWorks) != 1 {
+		t.Fatalf("QueryWorks with status filter failed: %v len=%d", err, len(queryWorks))
+	}
+	if queryWorks[0].WorkStatus != "submission_success" {
+		t.Fatalf("status filter should keep submission_success, got %+v", queryWorks[0])
 	}
 
 	work.WorkTitle = "Work Updated"

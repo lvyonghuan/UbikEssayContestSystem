@@ -40,6 +40,8 @@ definitions:
       workInfos:
         additionalProperties: {}
         type: object
+      workStatus:
+        type: string
       workTitle:
         type: string
     type: object

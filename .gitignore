@@ -40,8 +40,6 @@ Thumbs.db
 /tests_files/
 /submissions/
 /submission/submissions/
-/files/
-/scripts/
 
 # Private local E2E reports
 /tests_files/private_e2e_results/

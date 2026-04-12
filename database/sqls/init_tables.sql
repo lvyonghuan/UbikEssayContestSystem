@@ -56,6 +56,7 @@ CREATE TABLE review_events (
 CREATE TABLE review_event_judges (
     event_id INT NOT NULL,
     judge_id INT NOT NULL,
+    deadline_at TIMESTAMP NULL,
     PRIMARY KEY (event_id, judge_id),
     FOREIGN KEY (event_id) REFERENCES review_events(event_id) ON DELETE CASCADE,
     FOREIGN KEY (judge_id) REFERENCES judges(judge_id) ON DELETE CASCADE

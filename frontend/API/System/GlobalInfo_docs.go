@@ -224,7 +224,7 @@ const docTemplateGlobalInfo = `{
             "type": "object",
             "properties": {
                 "contestEndDate": {
-                    "description": "比赛结束日期，精确到分",
+                    "description": "比赛结束时间，TIMESTAMP",
                     "type": "string"
                 },
                 "contestID": {
@@ -239,7 +239,7 @@ const docTemplateGlobalInfo = `{
                     "type": "string"
                 },
                 "contestStartDate": {
-                    "description": "比赛开始日期，精确到分",
+                    "description": "比赛开始时间，TIMESTAMP",
                     "type": "string"
                 }
             }

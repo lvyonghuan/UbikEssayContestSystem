@@ -117,7 +117,6 @@ func buildAdminRouter() *gin.Engine {
 
 			works := admin.Group("/works", checkAccessToken)
 			{
-				//FIXME:加入筛选条件：状态字段（status）
 				works.GET("", requirePermission(_const.PermWorksRead), getWorks)
 				works.GET("/:work_id", requirePermission(_const.PermWorksRead), getWorkByID)
 				works.GET("/:work_id/file", requirePermission(_const.PermWorksRead), getWorkFile)
@@ -140,32 +139,7 @@ func buildAdminRouter() *gin.Engine {
 				subAdmins.POST("/handover-super", handoverSuperAdmin)
 			}
 
-			// 评审相关管理路由
-			judge := admin.Group("/judge", checkAccessToken)
-			{
-				judge.POST("/account")     //创建评委账号
-				judge.POST("/accounts")    //批量创建评委账号
-				judge.PUT("/:judge_id")    //更新评委账号信息
-				judge.DELETE("/:judge_id") //删除评委账号
-				judge.GET("/accounts")     //查看评委账号列表（可以带分页参数）
-
-				review := judge.Group("/review")
-				{
-					review.POST("/event")           //新建评审事件（评审事件：指以赛道为区分，以作品状态为粒度的评审工作
-					review.PUT("/:event_id")        //更新评审事件信息
-					review.PUT("/:event_id/assign") //为一次评审事件分配评委
-					review.DELETE("/:event_id")     //删除评审事件
-
-					review.GET("/:event_id")           //查看当前事件评委评分状况（获取和其关联的reviews）
-					review.GET("/:track_id/status")    //查看当前赛道全部的作品状态字段（去重），返回字符串数组
-					review.GET("/statu/:work_id")      //查看某个作品当前的评审状况
-					review.GET("/result/:work_id")     //查看某个作品的评审结果（获取结果表）
-					review.GET("/result/:work_id/gen") //(重新)生成评审结果
-					review.GET("/rank/:track_id")      //查看赛道下作品的评分排名
-					review.GET("/export/:track_id")    //导出评分表
-				}
-
-			}
+			registerJudgeReviewRoutes(admin)
 		}
 	}
 
@@ -390,6 +364,7 @@ func requireSuperAdmin() gin.HandlerFunc {
 // @Produce application/json
 // @Param Authorization header string true "Bearer {access_token}"
 // @Param track_id query int false "赛道ID，可选"
+// @Param status query string false "作品状态，可选"
 // @Param work_title query string false "作品名，可选"
 // @Param author_name query string false "作者名，可选"
 // @Param offset query int false "偏移量，默认0"
@@ -407,6 +382,7 @@ func getWorks(c *gin.Context) {
 		trackIDPtr = &trackID
 	}
 
+	workStatus := strings.TrimSpace(c.Query("status"))
 	workTitle := strings.TrimSpace(c.Query("work_title"))
 	authorName := strings.TrimSpace(c.Query("author_name"))
 
@@ -430,7 +406,7 @@ func getWorks(c *gin.Context) {
 		limit = parsedLimit
 	}
 
-	works, err := queryWorksSrcFn(trackIDPtr, workTitle, authorName, offset, limit)
+	works, err := queryWorksSrcFn(trackIDPtr, workStatus, workTitle, authorName, offset, limit)
 	if err != nil {
 		response.RespError(c, 500, "error: Query works error")
 		return

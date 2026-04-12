@@ -328,8 +328,8 @@ func getWorksByAuthorIDSrc(authorID int) ([]model.Work, error) {
 	return works, nil
 }
 
-func queryWorksSrc(trackID *int, workTitle string, authorName string, offset int, limit int) ([]model.Work, error) {
-	works, err := queryWorksFn(trackID, workTitle, authorName, offset, limit)
+func queryWorksSrc(trackID *int, workStatus string, workTitle string, authorName string, offset int, limit int) ([]model.Work, error) {
+	works, err := queryWorksFn(trackID, workStatus, workTitle, authorName, offset, limit)
 	if err != nil {
 		parsedErr := uerr.ExtractError(err)
 		log.Logger.Warn("Query works error: " + err.Error())

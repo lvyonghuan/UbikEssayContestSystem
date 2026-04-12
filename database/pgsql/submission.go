@@ -56,7 +56,7 @@ func GetWorksByAuthorID(authorID int) ([]model.Work, error) {
 	return works, nil
 }
 
-func QueryWorks(trackID *int, workTitle string, authorName string, offset int, limit int) ([]model.Work, error) {
+func QueryWorks(trackID *int, workStatus string, workTitle string, authorName string, offset int, limit int) ([]model.Work, error) {
 	var works []model.Work
 
 	query := postgresDB.Table("works").
@@ -66,6 +66,10 @@ func QueryWorks(trackID *int, workTitle string, authorName string, offset int, l
 
 	if trackID != nil {
 		query = query.Where("works.track_id = ?", *trackID)
+	}
+
+	if trimmedStatus := strings.TrimSpace(workStatus); trimmedStatus != "" {
+		query = query.Where("works.work_status = ?", trimmedStatus)
 	}
 
 	if trimmedTitle := strings.TrimSpace(workTitle); trimmedTitle != "" {

@@ -179,7 +179,7 @@ func mockAuthAndSources(t *testing.T) string {
 	getWorkByIDSrcFn = func(workID int) (model.Work, error) {
 		return model.Work{WorkID: workID, WorkTitle: "w", TrackID: 1, AuthorID: 1}, nil
 	}
-	queryWorksSrcFn = func(trackID *int, workTitle string, authorName string, offset int, limit int) ([]model.Work, error) {
+	queryWorksSrcFn = func(trackID *int, workStatus string, workTitle string, authorName string, offset int, limit int) ([]model.Work, error) {
 		return []model.Work{{WorkID: 1, WorkTitle: "w", TrackID: 1, AuthorID: 1}}, nil
 	}
 	deleteWorkSrcFn = func(adminID, workID int) error { return nil }
@@ -660,12 +660,23 @@ func TestHandlerErrorBranches(t *testing.T) {
 		t.Fatalf("expected 500 for delete track src error, got %d", got)
 	}
 
-	queryWorksSrcFn = func(trackID *int, workTitle string, authorName string, offset int, limit int) ([]model.Work, error) {
+	queryWorksSrcFn = func(trackID *int, workStatus string, workTitle string, authorName string, offset int, limit int) ([]model.Work, error) {
 		return nil, errors.New("x")
 	}
 	w = doRequest(router, http.MethodGet, "/api/v1/admin/works?track_id=1", nil, "Bearer admin")
 	if got := reqCode(t, w.Body.Bytes()); got != 500 {
 		t.Fatalf("expected 500 for query works src error, got %d", got)
+	}
+
+	queryWorksSrcFn = func(trackID *int, workStatus string, workTitle string, authorName string, offset int, limit int) ([]model.Work, error) {
+		if workStatus != "reviewing" {
+			t.Fatalf("expected status reviewing, got %s", workStatus)
+		}
+		return []model.Work{{WorkID: 1, WorkTitle: "w", TrackID: 1, AuthorID: 1, WorkStatus: "reviewing"}}, nil
+	}
+	w = doRequest(router, http.MethodGet, "/api/v1/admin/works?status=reviewing", nil, "Bearer admin")
+	if got := reqCode(t, w.Body.Bytes()); got != 200 {
+		t.Fatalf("expected 200 for status query, got %d", got)
 	}
 
 	getWorkByIDSrcFn = func(workID int) (model.Work, error) { return model.Work{}, errors.New("x") }

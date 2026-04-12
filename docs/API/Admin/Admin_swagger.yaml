@@ -280,6 +280,8 @@ definitions:
       workInfos:
         additionalProperties: {}
         type: object
+      workStatus:
+        type: string
       workTitle:
         type: string
     type: object
@@ -1460,6 +1462,10 @@ paths:
         in: query
         name: track_id
         type: integer
+      - description: 作品状态，可选
+        in: query
+        name: status
+        type: string
       - description: 作品名，可选
         in: query
         name: work_title
