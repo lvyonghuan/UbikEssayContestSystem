@@ -30,8 +30,10 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		`CREATE TABLE tracks (track_id INTEGER PRIMARY KEY AUTOINCREMENT, track_name TEXT, contest_id INTEGER, track_description TEXT, track_settings TEXT);`,
 		`CREATE TABLE works (work_id INTEGER PRIMARY KEY AUTOINCREMENT, work_title TEXT, track_id INTEGER, author_id INTEGER, work_status TEXT DEFAULT 'submission_success', work_infos TEXT);`,
 		`CREATE TABLE judges (judge_id INTEGER PRIMARY KEY AUTOINCREMENT, judge_name TEXT, password TEXT);`,
-		`CREATE TABLE review_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT, track_id INTEGER, event_name TEXT, work_status TEXT DEFAULT 'reviewing', start_time TIMESTAMP, end_time TIMESTAMP);`,
+		`CREATE TABLE review_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT, track_id INTEGER, event_name TEXT, work_status TEXT DEFAULT 'submission_success', start_time TIMESTAMP, end_time TIMESTAMP);`,
 		`CREATE TABLE review_event_judges (event_id INTEGER NOT NULL, judge_id INTEGER NOT NULL, deadline_at TIMESTAMP NULL, PRIMARY KEY (event_id, judge_id));`,
+		`CREATE TABLE reviews (review_id INTEGER PRIMARY KEY AUTOINCREMENT, work_id INTEGER, review_event_id INTEGER, judge_id INTEGER, work_reviews TEXT);`,
+		`CREATE TABLE review_results (result_id INTEGER PRIMARY KEY AUTOINCREMENT, work_id INTEGER, review_event_id INTEGER, reviews TEXT);`,
 		`CREATE TABLE script_definitions (script_id INTEGER PRIMARY KEY AUTOINCREMENT, script_key TEXT UNIQUE, script_name TEXT, interpreter TEXT, description TEXT, is_enabled BOOLEAN, meta TEXT, created_at DATETIME, updated_at DATETIME);`,
 		`CREATE TABLE script_versions (version_id INTEGER PRIMARY KEY AUTOINCREMENT, script_id INTEGER NOT NULL, version_num INTEGER NOT NULL, file_name TEXT NOT NULL, relative_path TEXT NOT NULL, checksum TEXT, is_active BOOLEAN, created_by INTEGER, created_at DATETIME, UNIQUE(script_id, version_num));`,
 		`CREATE TABLE script_flows (flow_id INTEGER PRIMARY KEY AUTOINCREMENT, flow_key TEXT UNIQUE, flow_name TEXT, description TEXT, is_enabled BOOLEAN, meta TEXT, created_at DATETIME, updated_at DATETIME);`,
@@ -253,6 +255,100 @@ func TestAuthorFunctions(t *testing.T) {
 
 	if err := DeleteAuthor(created); err != nil {
 		t.Fatalf("DeleteAuthor failed: %v", err)
+	}
+}
+
+func TestJudgeAssignableScopeAndConflictQueries(t *testing.T) {
+	db := setupTestDB(t)
+
+	now := time.Now().UTC()
+	if err := db.Exec(`INSERT INTO contests (contest_name, contest_start_date, contest_end_date) VALUES (?, ?, ?)`, "Contest", now, now.Add(24*time.Hour)).Error; err != nil {
+		t.Fatalf("seed contest failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO tracks (track_name, contest_id) VALUES (?, ?)`, "Track", 1).Error; err != nil {
+		t.Fatalf("seed track failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO works (work_title, track_id, author_id, work_status) VALUES (?, ?, ?, ?)`, "Work1", 1, 1, "submission_success").Error; err != nil {
+		t.Fatalf("seed work1 failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO works (work_title, track_id, author_id, work_status) VALUES (?, ?, ?, ?)`, "Work2", 1, 1, "submission_success").Error; err != nil {
+		t.Fatalf("seed work2 failed: %v", err)
+	}
+
+	if err := db.Exec(`INSERT INTO judges (judge_name, password) VALUES (?, ?)`, "judge1", "pwd").Error; err != nil {
+		t.Fatalf("seed judge1 failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO judges (judge_name, password) VALUES (?, ?)`, "judge2", "pwd").Error; err != nil {
+		t.Fatalf("seed judge2 failed: %v", err)
+	}
+
+	if err := db.Exec(`INSERT INTO review_events (track_id, event_name, work_status, start_time, end_time) VALUES (?, ?, ?, ?, ?)`, 1, "event1", "submission_success", now, now.Add(2*time.Hour)).Error; err != nil {
+		t.Fatalf("seed event1 failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO review_events (track_id, event_name, work_status, start_time, end_time) VALUES (?, ?, ?, ?, ?)`, 1, "event2", "submission_success", now, now.Add(2*time.Hour)).Error; err != nil {
+		t.Fatalf("seed event2 failed: %v", err)
+	}
+
+	if err := db.Exec(`INSERT INTO review_event_judges (event_id, judge_id) VALUES (?, ?)`, 2, 1).Error; err != nil {
+		t.Fatalf("bind judge1 event2 failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO review_event_judges (event_id, judge_id) VALUES (?, ?)`, 2, 2).Error; err != nil {
+		t.Fatalf("bind judge2 event2 failed: %v", err)
+	}
+
+	if err := db.Exec(`INSERT INTO reviews (work_id, review_event_id, judge_id, work_reviews) VALUES (?, ?, ?, ?)`, 1, 1, 1, "{}").Error; err != nil {
+		t.Fatalf("seed review judge1->work1 failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO reviews (work_id, review_event_id, judge_id, work_reviews) VALUES (?, ?, ?, ?)`, 2, 1, 2, "{}").Error; err != nil {
+		t.Fatalf("seed review judge2->work2 failed: %v", err)
+	}
+
+	worksForJudge1, err := GetReviewWorksByEventForJudge(2, 1, 0, 20)
+	if err != nil {
+		t.Fatalf("GetReviewWorksByEventForJudge judge1 failed: %v", err)
+	}
+	if len(worksForJudge1) != 1 || worksForJudge1[0].WorkID != 2 {
+		t.Fatalf("judge1 should only get work2, got %+v", worksForJudge1)
+	}
+
+	worksForJudge2, err := GetReviewWorksByEventForJudge(2, 2, 0, 20)
+	if err != nil {
+		t.Fatalf("GetReviewWorksByEventForJudge judge2 failed: %v", err)
+	}
+	if len(worksForJudge2) != 1 || worksForJudge2[0].WorkID != 1 {
+		t.Fatalf("judge2 should only get work1, got %+v", worksForJudge2)
+	}
+
+	assignableCount, err := CountAssignableWorksForJudgeInEvent(1, 2)
+	if err != nil {
+		t.Fatalf("CountAssignableWorksForJudgeInEvent failed: %v", err)
+	}
+	if assignableCount != 1 {
+		t.Fatalf("expected assignable count 1, got %d", assignableCount)
+	}
+
+	assignedCount, err := CountAssignedWorksForJudgeInEvent(1, 2)
+	if err != nil {
+		t.Fatalf("CountAssignedWorksForJudgeInEvent failed: %v", err)
+	}
+	if assignedCount != 1 {
+		t.Fatalf("expected assigned count 1, got %d", assignedCount)
+	}
+
+	reviewedInOtherEvent, err := HasJudgeReviewedWorkInOtherEventsByWork(1, 1, 2)
+	if err != nil {
+		t.Fatalf("HasJudgeReviewedWorkInOtherEventsByWork failed: %v", err)
+	}
+	if !reviewedInOtherEvent {
+		t.Fatal("judge1 should be marked as reviewed work1 in other events")
+	}
+
+	assignableJudgeIDs, err := GetAssignableJudgeIDsForWorkInEvent(2, 1)
+	if err != nil {
+		t.Fatalf("GetAssignableJudgeIDsForWorkInEvent failed: %v", err)
+	}
+	if len(assignableJudgeIDs) != 1 || assignableJudgeIDs[0] != 2 {
+		t.Fatalf("work1 in event2 should only be assignable to judge2, got %+v", assignableJudgeIDs)
 	}
 }
 

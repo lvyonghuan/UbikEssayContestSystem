@@ -202,6 +202,10 @@ func assignReviewEventJudges(c *gin.Context) {
 	}
 
 	if err = assignReviewEventJudgesSrcFn(c.GetInt("admin_token_id"), eventID, req.JudgeIDs); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no assignable works") {
+			response.RespError(c, 400, err.Error())
+			return
+		}
 		response.RespError(c, 500, err.Error())
 		return
 	}

@@ -19,31 +19,33 @@ import (
 )
 
 var (
-	createJudgeDBFn                    = pgsql.CreateJudge
-	updateJudgeByIDDBFn                = pgsql.UpdateJudgeByID
-	deleteJudgeByIDDBFn                = pgsql.DeleteJudgeByID
-	getJudgeByIDDBFn                   = pgsql.GetJudgeByID
-	listJudgesDBFn                     = pgsql.ListJudges
-	createReviewEventDBFn              = pgsql.CreateReviewEvent
-	updateReviewEventDBFn              = pgsql.UpdateReviewEvent
-	deleteReviewEventDBFn              = pgsql.DeleteReviewEvent
-	getReviewEventByIDDBFn             = pgsql.GetReviewEventByID
-	listReviewEventsByTrackIDDBFn      = pgsql.ListReviewEventsByTrackID
-	listReviewEventsByContestIDDBFn    = pgsql.ListReviewEventsByContestID
-	replaceReviewEventJudgesDBFn       = pgsql.ReplaceReviewEventJudges
-	listJudgeIDsByReviewEventDBFn      = pgsql.ListJudgeIDsByReviewEvent
-	updateReviewEventJudgeDeadlineDBFn = pgsql.UpdateReviewEventJudgeDeadline
-	listReviewsByWorkAndEventDBFn      = pgsql.ListReviewsByWorkAndEvent
-	listReviewResultsByWorkIDDBFn      = pgsql.ListReviewResultsByWorkID
-	upsertReviewResultDBFn             = pgsql.UpsertReviewResult
-	deleteReviewResultsByEventIDDBFn   = pgsql.DeleteReviewResultsByEventID
-	listReviewResultsByTrackIDDBFn     = pgsql.ListReviewResultsByTrackID
-	getReviewWorksByEventDBFn          = pgsql.GetReviewWorksByEvent
-	countAssignedWorksForJudgeInEvent  = pgsql.CountAssignedWorksForJudgeInEvent
-	countSubmittedReviewsForJudgeEvent = pgsql.CountSubmittedReviewsForJudgeInEvent
-	getContestListDBFn                 = pgsql.GetContestList
-	getTrackListDBFn                   = pgsql.GetTrackList
-	getDistinctTrackStatusesDBFn       = pgsql.GetDistinctWorkStatusesByTrackID
+	createJudgeDBFn                     = pgsql.CreateJudge
+	updateJudgeByIDDBFn                 = pgsql.UpdateJudgeByID
+	deleteJudgeByIDDBFn                 = pgsql.DeleteJudgeByID
+	getJudgeByIDDBFn                    = pgsql.GetJudgeByID
+	listJudgesDBFn                      = pgsql.ListJudges
+	createReviewEventDBFn               = pgsql.CreateReviewEvent
+	updateReviewEventDBFn               = pgsql.UpdateReviewEvent
+	deleteReviewEventDBFn               = pgsql.DeleteReviewEvent
+	getReviewEventByIDDBFn              = pgsql.GetReviewEventByID
+	listReviewEventsByTrackIDDBFn       = pgsql.ListReviewEventsByTrackID
+	listReviewEventsByContestIDDBFn     = pgsql.ListReviewEventsByContestID
+	replaceReviewEventJudgesDBFn        = pgsql.ReplaceReviewEventJudges
+	listJudgeIDsByReviewEventDBFn       = pgsql.ListJudgeIDsByReviewEvent
+	updateReviewEventJudgeDeadlineDBFn  = pgsql.UpdateReviewEventJudgeDeadline
+	listReviewsByWorkAndEventDBFn       = pgsql.ListReviewsByWorkAndEvent
+	listReviewResultsByWorkIDDBFn       = pgsql.ListReviewResultsByWorkID
+	upsertReviewResultDBFn              = pgsql.UpsertReviewResult
+	deleteReviewResultsByEventIDDBFn    = pgsql.DeleteReviewResultsByEventID
+	listReviewResultsByTrackIDDBFn      = pgsql.ListReviewResultsByTrackID
+	getReviewWorksByEventDBFn           = pgsql.GetReviewWorksByEvent
+	countAssignableWorksForJudgeInEvent = pgsql.CountAssignableWorksForJudgeInEvent
+	getAssignableJudgeIDsForWorkInEvent = pgsql.GetAssignableJudgeIDsForWorkInEvent
+	countAssignedWorksForJudgeInEvent   = pgsql.CountAssignedWorksForJudgeInEvent
+	countSubmittedReviewsForJudgeEvent  = pgsql.CountSubmittedReviewsForJudgeInEvent
+	getContestListDBFn                  = pgsql.GetContestList
+	getTrackListDBFn                    = pgsql.GetTrackList
+	getDistinctTrackStatusesDBFn        = pgsql.GetDistinctWorkStatusesByTrackID
 
 	newExcelFileFn = excelize.NewFile
 )
@@ -279,6 +281,9 @@ func assignReviewEventJudgesSrc(adminID int, eventID int, judgeIDs []int) error 
 	if eventID <= 0 {
 		return errors.New("invalid event_id")
 	}
+	if _, err := getReviewEventByIDDBFn(eventID); err != nil {
+		return uerr.ExtractError(err)
+	}
 
 	cleanIDs := make([]int, 0, len(judgeIDs))
 	seen := map[int]struct{}{}
@@ -292,6 +297,15 @@ func assignReviewEventJudgesSrc(adminID int, eventID int, judgeIDs []int) error 
 		if _, err := getJudgeByIDDBFn(judgeID); err != nil {
 			return uerr.ExtractError(err)
 		}
+
+		assignableCount, countErr := countAssignableWorksForJudgeInEvent(judgeID, eventID)
+		if countErr != nil {
+			return uerr.ExtractError(countErr)
+		}
+		if assignableCount <= 0 {
+			return fmt.Errorf("judge %d has no assignable works in this event", judgeID)
+		}
+
 		seen[judgeID] = struct{}{}
 		cleanIDs = append(cleanIDs, judgeID)
 	}
@@ -339,15 +353,26 @@ func getReviewEventProgressSrc(eventID int) (reviewEventProgress, error) {
 
 	completedWorks := 0
 	for _, work := range works {
+		assignableJudgeIDs, assignableErr := getAssignableJudgeIDsForWorkInEvent(eventID, work.WorkID)
+		if assignableErr != nil {
+			return reviewEventProgress{}, uerr.ExtractError(assignableErr)
+		}
+		assignableJudgeSet := make(map[int]struct{}, len(assignableJudgeIDs))
+		for _, judgeID := range assignableJudgeIDs {
+			assignableJudgeSet[judgeID] = struct{}{}
+		}
+
 		reviews, reviewErr := listReviewsByWorkAndEventDBFn(work.WorkID, eventID)
 		if reviewErr != nil {
 			return reviewEventProgress{}, uerr.ExtractError(reviewErr)
 		}
 		submittedJudgeSet := map[int]struct{}{}
 		for _, review := range reviews {
-			submittedJudgeSet[review.JudgeID] = struct{}{}
+			if _, ok := assignableJudgeSet[review.JudgeID]; ok {
+				submittedJudgeSet[review.JudgeID] = struct{}{}
+			}
 		}
-		if len(judgeIDs) > 0 && len(submittedJudgeSet) >= len(judgeIDs) {
+		if len(assignableJudgeIDs) > 0 && len(submittedJudgeSet) >= len(assignableJudgeIDs) {
 			completedWorks++
 		}
 	}
@@ -412,23 +437,34 @@ func getWorkReviewStatusSrc(workID int) (workReviewStatus, error) {
 
 	items := make([]workEventReview, 0, len(events))
 	summary := map[string]int{
-		"eventCount":     0,
+		"eventCount":      0,
 		"completedEvents": 0,
 	}
 	for _, event := range events {
-		judgeIDs, judgeErr := listJudgeIDsByReviewEventDBFn(event.EventID)
-		if judgeErr != nil {
-			return workReviewStatus{}, uerr.ExtractError(judgeErr)
+		if status := strings.TrimSpace(event.WorkStatus); status != "" && work.WorkStatus != status {
+			continue
 		}
+
+		assignableJudgeIDs, assignableErr := getAssignableJudgeIDsForWorkInEvent(event.EventID, workID)
+		if assignableErr != nil {
+			return workReviewStatus{}, uerr.ExtractError(assignableErr)
+		}
+		assignableJudgeSet := make(map[int]struct{}, len(assignableJudgeIDs))
+		for _, judgeID := range assignableJudgeIDs {
+			assignableJudgeSet[judgeID] = struct{}{}
+		}
+
 		reviews, reviewErr := listReviewsByWorkAndEventDBFn(workID, event.EventID)
 		if reviewErr != nil {
 			return workReviewStatus{}, uerr.ExtractError(reviewErr)
 		}
 		submittedJudgeSet := map[int]struct{}{}
 		for _, review := range reviews {
-			submittedJudgeSet[review.JudgeID] = struct{}{}
+			if _, ok := assignableJudgeSet[review.JudgeID]; ok {
+				submittedJudgeSet[review.JudgeID] = struct{}{}
+			}
 		}
-		completed := len(judgeIDs) > 0 && len(submittedJudgeSet) >= len(judgeIDs)
+		completed := len(assignableJudgeIDs) > 0 && len(submittedJudgeSet) >= len(assignableJudgeIDs)
 		if completed {
 			summary["completedEvents"]++
 		}
@@ -437,7 +473,7 @@ func getWorkReviewStatusSrc(workID int) (workReviewStatus, error) {
 		items = append(items, workEventReview{
 			EventID:          event.EventID,
 			EventName:        event.EventName,
-			AssignedJudges:   len(judgeIDs),
+			AssignedJudges:   len(assignableJudgeIDs),
 			SubmittedReviews: len(submittedJudgeSet),
 			Completed:        completed,
 		})
@@ -618,15 +654,26 @@ func getDashboardOverviewSrc() (dashboardOverview, error) {
 					return dashboardOverview{}, uerr.ExtractError(ewErr)
 				}
 				for _, work := range eventWorks {
+					assignableJudgeIDs, assignableErr := getAssignableJudgeIDsForWorkInEvent(event.EventID, work.WorkID)
+					if assignableErr != nil {
+						return dashboardOverview{}, uerr.ExtractError(assignableErr)
+					}
+					assignableJudgeSet := make(map[int]struct{}, len(assignableJudgeIDs))
+					for _, judgeID := range assignableJudgeIDs {
+						assignableJudgeSet[judgeID] = struct{}{}
+					}
+
 					reviews, reviewErr := listReviewsByWorkAndEventDBFn(work.WorkID, event.EventID)
 					if reviewErr != nil {
 						return dashboardOverview{}, uerr.ExtractError(reviewErr)
 					}
 					submittedJudges := map[int]struct{}{}
 					for _, review := range reviews {
-						submittedJudges[review.JudgeID] = struct{}{}
+						if _, ok := assignableJudgeSet[review.JudgeID]; ok {
+							submittedJudges[review.JudgeID] = struct{}{}
+						}
 					}
-					if len(judgeIDs) > 0 && len(submittedJudges) >= len(judgeIDs) {
+					if len(assignableJudgeIDs) > 0 && len(submittedJudges) >= len(assignableJudgeIDs) {
 						completedReviewedWorks++
 					}
 				}
@@ -829,7 +876,7 @@ func generateReviewResultForWorkAndEvent(workID int, eventID int) (model.ReviewR
 	if err != nil {
 		return model.ReviewResult{}, uerr.ExtractError(err)
 	}
-	judgeIDs, judgeErr := listJudgeIDsByReviewEventDBFn(eventID)
+	judgeIDs, judgeErr := getAssignableJudgeIDsForWorkInEvent(eventID, workID)
 	if judgeErr != nil {
 		return model.ReviewResult{}, uerr.ExtractError(judgeErr)
 	}

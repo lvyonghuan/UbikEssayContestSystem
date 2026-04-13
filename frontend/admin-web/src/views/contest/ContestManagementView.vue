@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { createContest, fetchContests, removeContest, updateContest } from '@/services/repositories/contestRepository'
 import { createTrack, fetchTracks, removeTrack, updateTrack } from '@/services/repositories/trackRepository'
 import type { Contest, Track } from '@/types/api'
+import { formatChinaDateTime, toChinaPickerValue } from '@/utils/date'
 
 interface TrackDraft {
   rowKey: string
@@ -119,8 +119,8 @@ async function openEditDialog(contest: Contest) {
   editingId.value = contest.contestID || null
   Object.assign(form, {
     ...contest,
-    contestStartDate: toPickerValue(contest.contestStartDate),
-    contestEndDate: toPickerValue(contest.contestEndDate),
+    contestStartDate: toChinaPickerValue(contest.contestStartDate),
+    contestEndDate: toChinaPickerValue(contest.contestEndDate),
   })
   resetTrackRows()
   dialogVisible.value = true
@@ -130,12 +130,8 @@ async function openEditDialog(contest: Contest) {
   }
 }
 
-function toPickerValue(value: string) {
-  const parsed = dayjs(value)
-  if (!parsed.isValid()) {
-    return value
-  }
-  return parsed.format('YYYY-MM-DD HH:mm')
+function formatContestDateCell(_row: Contest, _column: unknown, value: string) {
+  return formatChinaDateTime(value)
 }
 
 function buildPreparedTrackRows(contestId: number): PreparedTrackRow[] | null {
@@ -294,8 +290,8 @@ onMounted(loadContests)
     <el-table :data="contests" v-loading="loading" style="width: 100%">
       <el-table-column prop="contestName" label="赛事名称" min-width="160" />
       <el-table-column prop="contestID" label="ID" width="80" />
-      <el-table-column prop="contestStartDate" label="开始时间" min-width="160" />
-      <el-table-column prop="contestEndDate" label="结束时间" min-width="160" />
+      <el-table-column prop="contestStartDate" label="开始时间" min-width="160" :formatter="formatContestDateCell" />
+      <el-table-column prop="contestEndDate" label="结束时间" min-width="160" :formatter="formatContestDateCell" />
       <el-table-column label="操作" width="240">
         <template #default="scope">
           <el-space>

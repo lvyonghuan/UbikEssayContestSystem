@@ -1,6 +1,9 @@
 import { adminClient } from '@/services/http/client'
 import { unwrapResponse } from '@/services/http/response'
+import { assertBlobNotApiError } from '@/services/http/blob'
 import type { ApiResponse, Work, WorkQueryParams } from '@/types/api'
+
+const WORKS_QUERY_MAX_LIMIT = 100
 
 function normalizeWorkList(msg: unknown): Work[] {
   return Array.isArray(msg) ? (msg as Work[]) : []
@@ -12,6 +15,9 @@ function buildWorkQueryParams(params: WorkQueryParams) {
   if (typeof params.trackID === 'number') {
     query.track_id = params.trackID
   }
+  if (params.workStatus && params.workStatus.trim()) {
+    query.status = params.workStatus.trim()
+  }
   if (params.workTitle && params.workTitle.trim()) {
     query.work_title = params.workTitle.trim()
   }
@@ -22,7 +28,8 @@ function buildWorkQueryParams(params: WorkQueryParams) {
     query.offset = params.offset
   }
   if (typeof params.limit === 'number') {
-    query.limit = params.limit
+    const normalizedLimit = Math.min(Math.max(1, Math.trunc(params.limit)), WORKS_QUERY_MAX_LIMIT)
+    query.limit = normalizedLimit
   }
 
   return query
@@ -54,8 +61,9 @@ export async function removeWork(workId: number) {
 }
 
 export async function downloadWorkFile(workId: number) {
-  const { data } = await adminClient.get<Blob>(`/admin/works/${workId}/file`, {
+  const response = await adminClient.get<Blob>(`/admin/works/${workId}/file`, {
     responseType: 'blob',
   })
-  return data
+  await assertBlobNotApiError(response.data, response.headers['content-type'])
+  return response.data
 }

@@ -5,6 +5,7 @@ import (
 	"main/model"
 	"main/util/log"
 	"testing"
+	"time"
 
 	"github.com/lvyonghuan/Ubik-Util/uerr"
 	"gorm.io/gorm"
@@ -124,5 +125,27 @@ func TestGetTrackByIDSrc(t *testing.T) {
 	}
 	if _, err = getTrackByIDSrc(1); err == nil || errors.Is(err, errTrackNotFound) {
 		t.Fatalf("expected generic error, got %v", err)
+	}
+}
+
+func TestNormalizeContestTimezoneKeepsWallClock(t *testing.T) {
+	contest := model.Contest{
+		ContestStartDate: time.Date(2026, 4, 13, 10, 30, 0, 0, time.UTC),
+		ContestEndDate:   time.Date(2026, 4, 13, 18, 45, 0, 0, time.UTC),
+	}
+
+	normalizeContestTimezone(&contest)
+
+	startName, startOffset := contest.ContestStartDate.Zone()
+	endName, endOffset := contest.ContestEndDate.Zone()
+	if startOffset != 8*3600 || endOffset != 8*3600 {
+		t.Fatalf("expected +08:00 offset, got start=%s(%d) end=%s(%d)", startName, startOffset, endName, endOffset)
+	}
+
+	if contest.ContestStartDate.Hour() != 10 || contest.ContestStartDate.Minute() != 30 {
+		t.Fatalf("start wall-clock changed unexpectedly: %s", contest.ContestStartDate.Format(time.RFC3339))
+	}
+	if contest.ContestEndDate.Hour() != 18 || contest.ContestEndDate.Minute() != 45 {
+		t.Fatalf("end wall-clock changed unexpectedly: %s", contest.ContestEndDate.Format(time.RFC3339))
 	}
 }

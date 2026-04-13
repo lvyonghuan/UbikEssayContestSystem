@@ -1880,7 +1880,7 @@ const docTemplateAdmin = `{
                     },
                     {
                         "type": "string",
-                        "description": "作品状态，可选",
+                        "description": "作品状态筛选，可选",
                         "name": "status",
                         "in": "query"
                     },

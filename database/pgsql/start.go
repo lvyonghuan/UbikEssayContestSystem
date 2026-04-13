@@ -13,7 +13,7 @@ import (
 var postgresDB *gorm.DB
 
 func Start(dbConf conf.DBConfig) error {
-	dsn := "host=" + dbConf.Host + " user=" + dbConf.User + " password=" + dbConf.Password + " port= " + dbConf.Port + " dbname= ubik"
+	dsn := "host=" + dbConf.Host + " user=" + dbConf.User + " password=" + dbConf.Password + " port= " + dbConf.Port + " dbname= ubik TimeZone=Asia/Shanghai"
 
 	gormCfg := &gorm.Config{
 		Logger: logger.Default.LogMode(logger.LogLevel(dbConf.LogLevel)),

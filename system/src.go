@@ -6,6 +6,7 @@ import (
 	"main/model"
 	"main/util/log"
 	"strings"
+	"time"
 
 	"github.com/lvyonghuan/Ubik-Util/uerr"
 	"gorm.io/gorm"
@@ -23,11 +24,33 @@ var (
 	errTrackNotFound   = errors.New("track not found")
 )
 
+func chinaLocation() *time.Location {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err == nil {
+		return loc
+	}
+	return time.FixedZone("CST", 8*3600)
+}
+
+func withLocationKeepWallClock(t time.Time, loc *time.Location) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), loc)
+}
+
+func normalizeContestTimezone(contest *model.Contest) {
+	loc := chinaLocation()
+	contest.ContestStartDate = withLocationKeepWallClock(contest.ContestStartDate, loc)
+	contest.ContestEndDate = withLocationKeepWallClock(contest.ContestEndDate, loc)
+}
+
 func getContestSrc() ([]model.Contest, error) {
 	contests, err := getContestListFn()
 	if err != nil {
 		log.Logger.Error(errors.New("GetContestList error: " + err.Error()))
 		return nil, uerr.ExtractError(err)
+	}
+
+	for i := range contests {
+		normalizeContestTimezone(&contests[i])
 	}
 
 	return contests, nil
@@ -53,6 +76,8 @@ func getContestByIDSrc(contestID int) (model.Contest, error) {
 		log.Logger.Error(errors.New("GetContestByID error: " + parsedErr.Error()))
 		return model.Contest{}, parsedErr
 	}
+
+	normalizeContestTimezone(&contest)
 
 	return contest, nil
 }

@@ -200,6 +200,7 @@ export interface AuthorQueryParams {
 
 export interface WorkQueryParams {
   trackID?: number
+  workStatus?: string
   workTitle?: string
   authorName?: string
   offset?: number
@@ -217,6 +218,104 @@ export interface ContestJudgeBinding {
   contestID: number
   judgeID: number
   role?: string
+}
+
+export interface JudgeAccountInput {
+  judgeName: string
+  password: string
+}
+
+export interface ReviewEventInput {
+  trackID: number
+  eventName: string
+  // workStatus is a filter condition for selecting works in the event scope.
+  workStatus?: string
+  startTime?: string
+  endTime?: string
+}
+
+export interface ReviewEvent extends ReviewEventInput {
+  eventID: number
+  judgeIDs?: number[]
+}
+
+export interface JudgeProgressStat {
+  judgeID: number
+  judgeName: string
+  assignedCount: number
+  submittedCount: number
+  completionRate: number
+}
+
+export interface ReviewEventProgress {
+  eventID: number
+  eventName: string
+  trackID: number
+  assignedJudgeIDs: number[]
+  totalWorks: number
+  completedWorks: number
+  judgeProgress: JudgeProgressStat[]
+}
+
+export interface WorkEventReview {
+  eventID: number
+  eventName: string
+  assignedJudges: number
+  submittedReviews: number
+  completed: boolean
+}
+
+export interface WorkReviewStatus {
+  workID: number
+  events: WorkEventReview[]
+  summary: Record<string, number>
+  meta?: Record<string, string>
+}
+
+export interface ReviewResult {
+  resultID: number
+  workID: number
+  reviewEventID: number
+  reviews: JsonObject
+}
+
+export interface TrackRankItem {
+  workID: number
+  workTitle: string
+  authorID: number
+  authorName: string
+  finalScore: number
+  reviewCount: number
+}
+
+export interface DashboardOverview {
+  trackSubmissionCount: Record<string, number>
+  participatingAuthors: number
+  completedJudgeTasks: number
+  totalTrackJudges: number
+  completedReviewedWorks: number
+}
+
+export interface ContestTrackStatusStat {
+  trackID: number
+  trackName: string
+  totalWorks: number
+  statusCounts: Record<string, number>
+  totalAuthors: number
+  distinctStates: string[]
+}
+
+export interface ContestDailySubmissionStat {
+  date: string
+  count: number
+}
+
+export interface ContestReviewRegenerateResult {
+  generated: number
+}
+
+export interface JudgeDeadlinePayload {
+  deadlineAt: string
 }
 
 export interface DashboardTrendPoint {

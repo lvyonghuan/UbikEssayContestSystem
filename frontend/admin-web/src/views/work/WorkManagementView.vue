@@ -16,6 +16,7 @@ const listTitle = ref('请使用筛选条件查询作品')
 const filters = reactive({
   authorName: '',
   trackIdText: '',
+  workStatus: '',
   workTitle: '',
   offsetText: '0',
   limitText: '20',
@@ -41,13 +42,17 @@ const statusTagTypeMap: Record<string, 'success' | 'warning' | 'danger' | 'info'
   rejected: 'danger',
 }
 
-function parsePositiveInteger(text: string, label: string, allowEmpty = false) {
+function parsePositiveInteger(text: string, label: string, allowEmpty = false, maxValue?: number) {
   if (allowEmpty && !text.trim()) {
     return null
   }
   const parsed = Number(text)
   if (!Number.isInteger(parsed) || parsed <= 0) {
     ElMessage.warning(`${label} 需要是正整数`)
+    return null
+  }
+  if (typeof maxValue === 'number' && parsed > maxValue) {
+    ElMessage.warning(`${label} 不能大于 ${maxValue}`)
     return null
   }
   return parsed
@@ -106,7 +111,7 @@ function workStatusTagType(work: Work) {
 
 async function queryWorks() {
   const offset = parseNonNegativeInteger(filters.offsetText, '偏移量')
-  const limit = parsePositiveInteger(filters.limitText, '每页条数')
+  const limit = parsePositiveInteger(filters.limitText, '每页条数', false, 100)
   let trackID: number | undefined
 
   const trackIdText = filters.trackIdText.trim()
@@ -126,6 +131,7 @@ async function queryWorks() {
   try {
     works.value = await fetchWorks({
       authorName: filters.authorName.trim() || undefined,
+      workStatus: filters.workStatus.trim() || undefined,
       workTitle: filters.workTitle.trim() || undefined,
       trackID,
       offset,
@@ -143,6 +149,7 @@ function resetFilters() {
   Object.assign(filters, {
     authorName: '',
     trackIdText: '',
+    workStatus: '',
     workTitle: '',
     offsetText: '0',
     limitText: '20',
@@ -219,6 +226,7 @@ async function downloadFile(workId: number | undefined) {
         <el-input v-model="filters.workTitle" placeholder="作品标题" style="width: 180px" clearable />
         <el-input v-model="filters.authorName" placeholder="作者名" style="width: 180px" clearable />
         <el-input v-model="filters.trackIdText" placeholder="赛道 ID（可选）" style="width: 180px" clearable />
+        <el-input v-model="filters.workStatus" placeholder="作品状态筛选（如 submission_success）" style="width: 220px" clearable />
         <el-input v-model="filters.offsetText" placeholder="偏移量" style="width: 120px" />
         <el-input v-model="filters.limitText" placeholder="每页条数" style="width: 120px" />
         <el-button type="primary" @click="queryWorks">查询</el-button>

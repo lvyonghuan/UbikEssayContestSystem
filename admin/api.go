@@ -364,7 +364,7 @@ func requireSuperAdmin() gin.HandlerFunc {
 // @Produce application/json
 // @Param Authorization header string true "Bearer {access_token}"
 // @Param track_id query int false "赛道ID，可选"
-// @Param status query string false "作品状态，可选"
+// @Param status query string false "作品状态筛选，可选"
 // @Param work_title query string false "作品名，可选"
 // @Param author_name query string false "作者名，可选"
 // @Param offset query int false "偏移量，默认0"

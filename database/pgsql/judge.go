@@ -289,6 +289,165 @@ func GetReviewWorksByEvent(eventID int, offset int, limit int) ([]model.Work, er
 	return works, nil
 }
 
+func GetReviewWorksByEventForJudge(eventID int, judgeID int, offset int, limit int) ([]model.Work, error) {
+	event, err := GetReviewEventByID(eventID)
+	if err != nil {
+		return nil, err
+	}
+
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	var works []model.Work
+	query := postgresDB.Table("works").
+		Select("works.work_id", "works.work_title", "works.track_id", "works.author_id", "works.work_status", "works.work_infos", "authors.author_name", "tracks.track_name").
+		Joins("LEFT JOIN authors ON authors.author_id = works.author_id").
+		Joins("LEFT JOIN tracks ON tracks.track_id = works.track_id").
+		Where("works.track_id = ?", event.TrackID)
+
+	if status := strings.TrimSpace(event.WorkStatus); status != "" {
+		query = query.Where("works.work_status = ?", status)
+	}
+
+	if judgeID > 0 {
+		reviewedWorkIDs, reviewedErr := listJudgeReviewedWorkIDsInTrackExcludingEvent(judgeID, event.TrackID, eventID)
+		if reviewedErr != nil {
+			return nil, reviewedErr
+		}
+		if len(reviewedWorkIDs) > 0 {
+			query = query.Where("works.work_id NOT IN ?", reviewedWorkIDs)
+		}
+	}
+
+	err = query.Order("works.work_id ASC").Offset(offset).Limit(limit).Scan(&works).Error
+	if err != nil {
+		return nil, uerr.NewError(err)
+	}
+
+	return works, nil
+}
+
+func listJudgeReviewedWorkIDsInTrackExcludingEvent(judgeID int, trackID int, excludeEventID int) ([]int, error) {
+	if judgeID <= 0 || trackID <= 0 {
+		return []int{}, nil
+	}
+
+	type row struct {
+		WorkID int `gorm:"column:work_id"`
+	}
+	rows := make([]row, 0)
+	query := postgresDB.Table("reviews").
+		Select("DISTINCT reviews.work_id").
+		Joins("JOIN works ON works.work_id = reviews.work_id").
+		Where("reviews.judge_id = ? AND works.track_id = ?", judgeID, trackID)
+
+	if excludeEventID > 0 {
+		query = query.Where("reviews.review_event_id <> ?", excludeEventID)
+	}
+
+	err := query.Order("reviews.work_id ASC").Scan(&rows).Error
+	if err != nil {
+		return nil, uerr.NewError(err)
+	}
+
+	workIDs := make([]int, 0, len(rows))
+	for _, row := range rows {
+		workIDs = append(workIDs, row.WorkID)
+	}
+
+	return workIDs, nil
+}
+
+func CountAssignableWorksForJudgeInEvent(judgeID int, eventID int) (int64, error) {
+	event, err := GetReviewEventByID(eventID)
+	if err != nil {
+		return 0, err
+	}
+
+	query := postgresDB.Model(&model.Work{}).Where("track_id = ?", event.TrackID)
+	if status := strings.TrimSpace(event.WorkStatus); status != "" {
+		query = query.Where("work_status = ?", status)
+	}
+
+	reviewedWorkIDs, reviewedErr := listJudgeReviewedWorkIDsInTrackExcludingEvent(judgeID, event.TrackID, eventID)
+	if reviewedErr != nil {
+		return 0, reviewedErr
+	}
+	if len(reviewedWorkIDs) > 0 {
+		query = query.Where("work_id NOT IN ?", reviewedWorkIDs)
+	}
+
+	var count int64
+	if countErr := query.Count(&count).Error; countErr != nil {
+		return 0, uerr.NewError(countErr)
+	}
+
+	return count, nil
+}
+
+func HasJudgeReviewedWorkInOtherEventsByWork(judgeID int, workID int, eventID int) (bool, error) {
+	if judgeID <= 0 || workID <= 0 {
+		return false, nil
+	}
+
+	query := postgresDB.Model(&model.Review{}).
+		Where("judge_id = ? AND work_id = ?", judgeID, workID)
+	if eventID > 0 {
+		query = query.Where("review_event_id <> ?", eventID)
+	}
+
+	var count int64
+	err := query.Count(&count).Error
+	if err != nil {
+		return false, uerr.NewError(err)
+	}
+
+	return count > 0, nil
+}
+
+func GetAssignableJudgeIDsForWorkInEvent(eventID int, workID int) ([]int, error) {
+	event, err := GetReviewEventByID(eventID)
+	if err != nil {
+		return nil, err
+	}
+
+	work, workErr := GetWorkByID(workID)
+	if workErr != nil {
+		return nil, workErr
+	}
+	if work.TrackID != event.TrackID {
+		return []int{}, nil
+	}
+	if status := strings.TrimSpace(event.WorkStatus); status != "" && work.WorkStatus != status {
+		return []int{}, nil
+	}
+
+	type row struct {
+		JudgeID int `gorm:"column:judge_id"`
+	}
+	rows := make([]row, 0)
+	err = postgresDB.Table("review_event_judges AS rej").
+		Select("rej.judge_id").
+		Where("rej.event_id = ?", eventID).
+		Where("NOT EXISTS (SELECT 1 FROM reviews r WHERE r.judge_id = rej.judge_id AND r.work_id = ? AND r.review_event_id <> ?)", workID, eventID).
+		Order("rej.judge_id ASC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, uerr.NewError(err)
+	}
+
+	judgeIDs := make([]int, 0, len(rows))
+	for _, row := range rows {
+		judgeIDs = append(judgeIDs, row.JudgeID)
+	}
+
+	return judgeIDs, nil
+}
+
 func UpsertReview(workID int, reviewEventID int, judgeID int, workReviews map[string]any) (model.Review, error) {
 	var review model.Review
 	err := postgresDB.Where("work_id = ? AND review_event_id = ? AND judge_id = ?", workID, reviewEventID, judgeID).First(&review).Error
@@ -385,11 +544,6 @@ func CountSubmittedReviewsForJudgeInEvent(judgeID int, eventID int) (int64, erro
 }
 
 func CountAssignedWorksForJudgeInEvent(judgeID int, eventID int) (int64, error) {
-	event, err := GetReviewEventByID(eventID)
-	if err != nil {
-		return 0, err
-	}
-
 	assigned, assignErr := IsJudgeAssignedToEvent(eventID, judgeID)
 	if assignErr != nil {
 		return 0, assignErr
@@ -398,17 +552,7 @@ func CountAssignedWorksForJudgeInEvent(judgeID int, eventID int) (int64, error) 
 		return 0, nil
 	}
 
-	query := postgresDB.Model(&model.Work{}).Where("track_id = ?", event.TrackID)
-	if status := strings.TrimSpace(event.WorkStatus); status != "" {
-		query = query.Where("work_status = ?", status)
-	}
-
-	var count int64
-	if countErr := query.Count(&count).Error; countErr != nil {
-		return 0, uerr.NewError(countErr)
-	}
-
-	return count, nil
+	return CountAssignableWorksForJudgeInEvent(judgeID, eventID)
 }
 
 func UpsertReviewResult(workID int, reviewEventID int, reviews map[string]any) (model.ReviewResult, error) {

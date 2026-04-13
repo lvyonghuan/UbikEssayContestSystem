@@ -23,12 +23,13 @@ var (
 	listReviewEventsByJudgeIDFn       = pgsql.ListReviewEventsByJudgeID
 	getReviewEventByIDFn              = pgsql.GetReviewEventByID
 	isJudgeAssignedToEventFn          = pgsql.IsJudgeAssignedToEvent
-	getReviewWorksByEventFn           = pgsql.GetReviewWorksByEvent
+	getReviewWorksByEventFn           = pgsql.GetReviewWorksByEventForJudge
 	upsertReviewFn                    = pgsql.UpsertReview
 	listReviewsByJudgeAndEventFn      = pgsql.ListReviewsByJudgeAndEvent
 	getReviewByIDFn                   = pgsql.GetReviewByID
 	updateReviewByIDFn                = pgsql.UpdateReviewByID
 	getWorkByIDFn                     = pgsql.GetWorkByID
+	hasReviewedWorkInOtherEventsFn    = pgsql.HasJudgeReviewedWorkInOtherEventsByWork
 	genTokenAndRefreshTokenFn         = token.GenTokenAndRefreshToken
 	countAssignedWorksForJudgeInEvent = pgsql.CountAssignedWorksForJudgeInEvent
 	countSubmittedReviewsForJudgeFn   = pgsql.CountSubmittedReviewsForJudgeInEvent
@@ -125,7 +126,7 @@ func listJudgeEventWorksSrc(judgeID int, eventID int, offset int, limit int) ([]
 		return nil, err
 	}
 
-	works, err := getReviewWorksByEventFn(eventID, offset, limit)
+	works, err := getReviewWorksByEventFn(eventID, judgeID, offset, limit)
 	if err != nil {
 		return nil, uerr.ExtractError(err)
 	}
@@ -152,6 +153,14 @@ func submitJudgeReviewSrc(judgeID int, input ReviewSubmitInput) (model.Review, e
 	}
 	if status := strings.TrimSpace(event.WorkStatus); status != "" && work.WorkStatus != status {
 		return model.Review{}, errors.New("work status is not in review scope")
+	}
+
+	alreadyReviewed, reviewedErr := hasReviewedWorkInOtherEventsFn(judgeID, input.WorkID, input.EventID)
+	if reviewedErr != nil {
+		return model.Review{}, uerr.ExtractError(reviewedErr)
+	}
+	if alreadyReviewed {
+		return model.Review{}, errors.New("work already reviewed by judge in another event")
 	}
 
 	judgeComment := strings.TrimSpace(input.JudgeComment)

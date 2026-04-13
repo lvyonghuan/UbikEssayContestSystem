@@ -3,6 +3,9 @@ import type {
   Contest,
   FlowMount,
   FlowStep,
+  JudgeProfile,
+  ReviewEvent,
+  ReviewResult,
   ScriptDefinition,
   ScriptFlow,
   ScriptVersion,
@@ -305,6 +308,105 @@ export const mockSubAdmins: SubAdminInfo[] = [
     permissionNames: ['work.read', 'work.review'],
   },
 ]
+
+export const mockJudgeProfiles: JudgeProfile[] = [
+  {
+    judgeID: 301,
+    judgeName: '吴穹',
+    judgeEmail: 'wuqiong@ubik.com',
+    isActive: true,
+  },
+  {
+    judgeID: 302,
+    judgeName: '许临',
+    judgeEmail: 'xulin@ubik.com',
+    isActive: true,
+  },
+  {
+    judgeID: 303,
+    judgeName: '裴澈',
+    judgeEmail: 'peiche@ubik.com',
+    isActive: true,
+  },
+]
+
+export const mockReviewEvents: ReviewEvent[] = [
+  {
+    eventID: 701,
+    trackID: 101,
+    eventName: '硬核初评',
+    workStatus: 'submission_success',
+    startTime: '2026-04-08T09:00:00Z',
+    endTime: '2026-04-18T23:59:59Z',
+    judgeIDs: [301, 302],
+  },
+  {
+    eventID: 702,
+    trackID: 102,
+    eventName: '太空歌剧初评',
+    workStatus: 'submission_success',
+    startTime: '2026-04-09T09:00:00Z',
+    endTime: '2026-04-19T23:59:59Z',
+    judgeIDs: [301, 303],
+  },
+  {
+    eventID: 703,
+    trackID: 201,
+    eventName: '推理初评',
+    workStatus: 'submission_success',
+    startTime: '2026-04-10T09:00:00Z',
+    endTime: '2026-04-20T23:59:59Z',
+    judgeIDs: [302, 303],
+  },
+]
+
+export const mockReviewResultsByWork: Record<number, ReviewResult[]> = {
+  5001: [
+    {
+      resultID: 9001,
+      workID: 5001,
+      reviewEventID: 701,
+      reviews: {
+        finalScore: 88.5,
+        reviewCount: 2,
+        assignedJudgeCount: 2,
+        comments: '结构完整，世界观清晰。',
+        judgeScores: { '301': 90, '302': 87 },
+        generatedAt: '2026-04-11T06:00:00Z',
+      },
+    },
+  ],
+  5002: [
+    {
+      resultID: 9002,
+      workID: 5002,
+      reviewEventID: 701,
+      reviews: {
+        finalScore: 92.0,
+        reviewCount: 2,
+        assignedJudgeCount: 2,
+        comments: '人物立得住，节奏优秀。',
+        judgeScores: { '301': 93, '302': 91 },
+        generatedAt: '2026-04-11T06:00:00Z',
+      },
+    },
+  ],
+  5003: [
+    {
+      resultID: 9003,
+      workID: 5003,
+      reviewEventID: 702,
+      reviews: {
+        finalScore: 85.5,
+        reviewCount: 2,
+        assignedJudgeCount: 2,
+        comments: '创意不错，细节仍可加强。',
+        judgeScores: { '301': 86, '303': 85 },
+        generatedAt: '2026-04-12T06:00:00Z',
+      },
+    },
+  ],
+}
 
 export const mockAuthors: Author[] = [
   {

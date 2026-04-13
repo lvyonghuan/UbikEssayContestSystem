@@ -47,7 +47,7 @@ CREATE TABLE review_events (
     event_id SERIAL PRIMARY KEY,
     track_id INT,
     event_name VARCHAR(255) NOT NULL,
-    work_status VARCHAR(128) NOT NULL DEFAULT 'reviewing',
+    work_status VARCHAR(128) NOT NULL DEFAULT 'submission_success',
     start_time TIMESTAMP NOT NULL,
     end_time TIMESTAMP NOT NULL,
     FOREIGN KEY (track_id) REFERENCES tracks(track_id) ON DELETE SET NULL

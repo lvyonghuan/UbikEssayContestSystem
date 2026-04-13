@@ -229,7 +229,7 @@ func submitReviewResult(c *gin.Context) {
 			response.RespError(c, 403, err.Error())
 			return
 		}
-		if strings.Contains(strings.ToLower(err.Error()), "invalid") || strings.Contains(strings.ToLower(err.Error()), "does not belong") || strings.Contains(strings.ToLower(err.Error()), "status") {
+		if strings.Contains(strings.ToLower(err.Error()), "invalid") || strings.Contains(strings.ToLower(err.Error()), "does not belong") || strings.Contains(strings.ToLower(err.Error()), "status") || strings.Contains(strings.ToLower(err.Error()), "already reviewed") {
 			response.RespError(c, 400, err.Error())
 			return
 		}

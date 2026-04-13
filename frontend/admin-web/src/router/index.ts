@@ -1,8 +1,9 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import type { RouteRecordRaw } from 'vue-router'
 import { hasTokenPair } from '@/services/auth/token'
 import { featureFlags } from '@/features/flags'
 
-const adminChildren = [
+const adminChildren: RouteRecordRaw[] = [
   {
     path: '',
     name: 'dashboard',
@@ -12,6 +13,12 @@ const adminChildren = [
     path: 'contests',
     name: 'contests',
     component: () => import('@/views/contest/ContestManagementView.vue'),
+  },
+  {
+    path: 'contests/:contestId/tracks/:trackId',
+    name: 'contest-track-detail',
+    component: () => import('@/views/track/TrackDetailView.vue'),
+    props: true,
   },
   {
     path: 'contests/:contestId',
@@ -63,9 +70,11 @@ const adminChildren = [
 
 if (featureFlags.judgeModule) {
   adminChildren.push({
-    path: 'contests/:contestId/judges',
-    name: 'contest-judges',
-    component: () => import('@/views/shared/JudgePlaceholderView.vue'),
+    path: 'judge-review/:contestId?',
+    alias: 'contests/:contestId/judges',
+    name: 'judge-review',
+    component: () => import('@/views/judge/JudgeReviewManagementView.vue'),
+    props: true,
   })
 }
 

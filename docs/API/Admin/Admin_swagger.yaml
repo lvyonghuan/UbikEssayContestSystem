@@ -1462,7 +1462,7 @@ paths:
         in: query
         name: track_id
         type: integer
-      - description: 作品状态，可选
+      - description: 作品状态筛选，可选
         in: query
         name: status
         type: string

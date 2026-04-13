@@ -21,6 +21,18 @@ import {
 } from '@/services/repositories/scriptRepository'
 import { fetchTracks } from '@/services/repositories/trackRepository'
 import {
+  fetchContestDailySubmissionStats,
+  fetchContestJudgeProgressStats,
+  fetchContestTrackStatusStats,
+  fetchDashboardOverview,
+  fetchTrackReviewRanking,
+  fetchTrackStatuses,
+  fetchWorkReviewResults,
+  fetchWorkReviewStatus,
+  regenerateContestReviewResults,
+  regenerateWorkReviewResults,
+} from '@/services/repositories/judgeRepository'
+import {
   fetchWorkByID,
   fetchWorks,
   removeWork,
@@ -135,6 +147,10 @@ describe('repositories with mock api', () => {
     const worksByTrack = await fetchWorks({ trackID: 101, limit: 100 })
     expect(worksByTrack.length).toBeGreaterThan(0)
 
+    const worksByStatus = await fetchWorks({ workStatus: '待审核', limit: 100 })
+    expect(worksByStatus.length).toBeGreaterThan(0)
+    expect(worksByStatus.every((item) => item.workStatus === '待审核')).toBe(true)
+
     const worksByAuthor = await fetchWorks({ authorName: '陈', limit: 100 })
     expect(worksByAuthor.length).toBeGreaterThan(0)
 
@@ -146,6 +162,42 @@ describe('repositories with mock api', () => {
     await removeWork(workId)
     const worksAfterDelete = await fetchWorks({ trackID: 101, limit: 100 })
     expect(worksAfterDelete.find((item) => item.workID === workId)).toBeUndefined()
+  })
+
+  it('supports judge and dashboard repositories', async () => {
+    const overview = await fetchDashboardOverview()
+    expect(typeof overview.participatingAuthors).toBe('number')
+
+    const trackStats = await fetchContestTrackStatusStats(1)
+    expect(trackStats.length).toBeGreaterThan(0)
+    expect(typeof trackStats[0].trackID).toBe('number')
+
+    const dailyStats = await fetchContestDailySubmissionStats(1)
+    expect(Array.isArray(dailyStats)).toBe(true)
+
+    const judgeStats = await fetchContestJudgeProgressStats(1)
+    expect(Array.isArray(judgeStats)).toBe(true)
+
+    const statuses = await fetchTrackStatuses(101)
+    expect(statuses.length).toBeGreaterThan(0)
+
+    const ranking = await fetchTrackReviewRanking(101)
+    expect(ranking.length).toBeGreaterThan(0)
+
+    const workId = ranking[0].workID
+    expect(workId).toBeGreaterThan(0)
+
+    const workStatus = await fetchWorkReviewStatus(workId)
+    expect(workStatus.workID).toBe(workId)
+
+    const workResults = await fetchWorkReviewResults(workId)
+    expect(workResults.length).toBeGreaterThan(0)
+
+    const regeneratedWorkResults = await regenerateWorkReviewResults(workId)
+    expect(regeneratedWorkResults.length).toBe(workStatus.summary.eventCount || 0)
+
+    const regeneratedContest = await regenerateContestReviewResults(1)
+    expect(typeof regeneratedContest.generated).toBe('number')
   })
 
   it('supports sub-admin repositories', async () => {
