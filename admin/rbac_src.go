@@ -104,7 +104,9 @@ func validatePermissionNames(permissionNames []string) ([]string, error) {
 
 	for _, name := range normalized {
 		if _, ok := availableSet[name]; !ok {
-			return nil, errors.New("invalid permission name: " + name)
+			err = errors.New("invalid permission name: " + name)
+			log.Logger.Warn("Validate permission names error: " + err.Error())
+			return nil, err
 		}
 	}
 
@@ -131,10 +133,14 @@ func sendSMTPMail(from string, appPassword string, host string, port int, to str
 	host = strings.TrimSpace(host)
 	to = strings.TrimSpace(to)
 	if from == "" || appPassword == "" || host == "" || port <= 0 {
-		return errors.New("email config is incomplete")
+		err := errors.New("email config is incomplete")
+		log.Logger.Warn("Send smtp mail error: " + err.Error())
+		return err
 	}
 	if to == "" {
-		return errors.New("email receiver is empty")
+		err := errors.New("email receiver is empty")
+		log.Logger.Warn("Send smtp mail error: " + err.Error())
+		return err
 	}
 
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
@@ -149,19 +155,27 @@ func sendSMTPMail(from string, appPassword string, host string, port int, to str
 		body,
 	}, "\r\n")
 
-	return smtp.SendMail(addr, auth, from, []string{to}, []byte(message))
+	err := smtp.SendMail(addr, auth, from, []string{to}, []byte(message))
+	if err != nil {
+		wrappedErr := uerr.NewError(err)
+		log.Logger.Warn("Send smtp mail error: " + wrappedErr.Error())
+		return wrappedErr
+	}
+
+	return nil
 }
 
 func sendSubAdminPasswordEmail(email string, adminName string, tempPassword string) error {
 	emailCfg, err := getSystemEmailConfigFn()
 	if err != nil {
+		log.Logger.Warn("Send sub admin password email get config error: " + err.Error())
 		return uerr.ExtractError(err)
 	}
 
 	subject := "Ubik 子管理员账户创建通知"
 	body := fmt.Sprintf("你好，%s：\n\n你的 Ubik 管理员账户已创建。\n用户名: %s\n临时密码: %s\n\n请登录后尽快修改密码。", adminName, adminName, tempPassword)
 
-	return sendSMTPMailFn(
+	err = sendSMTPMailFn(
 		emailCfg.EmailAddress,
 		emailCfg.EmailAppPassword,
 		emailCfg.EmailSmtpServer,
@@ -170,12 +184,19 @@ func sendSubAdminPasswordEmail(email string, adminName string, tempPassword stri
 		subject,
 		body,
 	)
+	if err != nil {
+		log.Logger.Warn("Send sub admin password email send error: " + err.Error())
+		return uerr.ExtractError(err)
+	}
+
+	return nil
 }
 
 func createSubAdminWithValidatedPermissions(operatorAdminID int, adminName string, adminEmail string, permissionNames []string) (model.SubAdminCreateResult, error) {
 	tempPassword := password.Generate()
 	hashedPassword, err := password.HashPassword(tempPassword)
 	if err != nil {
+		log.Logger.Warn("Create sub admin hash password error: " + err.Error())
 		return model.SubAdminCreateResult{}, uerr.ExtractError(err)
 	}
 
@@ -191,6 +212,7 @@ func createSubAdminWithValidatedPermissions(operatorAdminID int, adminName strin
 	}
 
 	if err = createSubAdminFn(admin, permissionNames); err != nil {
+		log.Logger.Warn("Create sub admin error: " + err.Error())
 		return model.SubAdminCreateResult{}, uerr.ExtractError(err)
 	}
 
@@ -204,7 +226,9 @@ func createSubAdminWithValidatedPermissions(operatorAdminID int, adminName strin
 
 	if emailErr := sendSubAdminPasswordEmail(admin.AdminEmail, admin.AdminName, tempPassword); emailErr != nil {
 		result.EmailSent = false
-		result.EmailError = emailErr.Error()
+		parsedErr := uerr.ExtractError(emailErr)
+		log.Logger.Warn("Send sub admin password email error: " + parsedErr.Error())
+		result.EmailError = parsedErr.Error()
 	}
 
 	createActionLogFn(operatorAdminID, _const.Admins, _const.Create,
@@ -220,12 +244,15 @@ func createSubAdminWithValidatedPermissions(operatorAdminID int, adminName strin
 func createSubAdminSrc(operatorAdminID int, req model.CreateSubAdminRequest) (model.SubAdminCreateResult, error) {
 	email := strings.ToLower(strings.TrimSpace(req.AdminEmail))
 	if _, err := netmail.ParseAddress(email); err != nil {
-		return model.SubAdminCreateResult{}, errors.New("invalid adminEmail")
+		err = errors.New("invalid adminEmail")
+		log.Logger.Warn("Create sub admin error: " + err.Error())
+		return model.SubAdminCreateResult{}, err
 	}
 
 	permissionNames, err := validatePermissionNames(req.PermissionNames)
 	if err != nil {
-		return model.SubAdminCreateResult{}, err
+		log.Logger.Warn("Create sub admin validate permission error: " + err.Error())
+		return model.SubAdminCreateResult{}, uerr.ExtractError(err)
 	}
 
 	return createSubAdminWithValidatedPermissions(operatorAdminID, req.AdminName, email, permissionNames)
@@ -239,7 +266,8 @@ func batchCreateSubAdminsSrc(operatorAdminID int, emails []string, permissionNam
 
 	validatedPermissions, err := validatePermissionNames(permissionNames)
 	if err != nil {
-		return resp, err
+		log.Logger.Warn("Batch create sub admins validate permission error: " + err.Error())
+		return resp, uerr.ExtractError(err)
 	}
 
 	seen := make(map[string]struct{}, len(emails))
@@ -282,12 +310,14 @@ func listSubAdminsSrc() ([]model.SubAdminInfo, error) {
 func updateSubAdminPermissionsSrc(operatorAdminID int, targetAdminID int, permissionNames []string) error {
 	validatedPermissions, err := validatePermissionNames(permissionNames)
 	if err != nil {
-		return err
+		log.Logger.Warn("Update sub admin permissions validate permission error: " + err.Error())
+		return uerr.ExtractError(err)
 	}
 
 	if err = setSubAdminPermsFn(targetAdminID, validatedPermissions); err != nil {
 		parsedErr := uerr.ExtractError(err)
 		if errors.Is(parsedErr, gorm.ErrRecordNotFound) {
+			log.Logger.Warn("Update sub admin permissions error: " + gorm.ErrRecordNotFound.Error())
 			return gorm.ErrRecordNotFound
 		}
 		log.Logger.Warn("Update sub admin permissions error: " + parsedErr.Error())
@@ -307,15 +337,19 @@ func updateSubAdminPermissionsSrc(operatorAdminID int, targetAdminID int, permis
 func disableSubAdminSrc(operatorAdminID int, targetAdminID int) error {
 	isSuper, err := isSuperAdminSrc(targetAdminID)
 	if err != nil {
-		return err
+		log.Logger.Warn("Disable sub admin check super admin error: " + err.Error())
+		return uerr.ExtractError(err)
 	}
 	if isSuper {
-		return errors.New("cannot disable super admin")
+		err = errors.New("cannot disable super admin")
+		log.Logger.Warn("Disable sub admin error: " + err.Error())
+		return err
 	}
 
 	if err = setAdminActiveFn(targetAdminID, false); err != nil {
 		parsedErr := uerr.ExtractError(err)
 		if errors.Is(parsedErr, gorm.ErrRecordNotFound) {
+			log.Logger.Warn("Disable sub admin error: " + gorm.ErrRecordNotFound.Error())
 			return gorm.ErrRecordNotFound
 		}
 		log.Logger.Warn("Disable sub admin error: " + parsedErr.Error())
@@ -335,6 +369,7 @@ func deleteSubAdminSrc(operatorAdminID int, targetAdminID int) error {
 	if err := deleteSubAdminByIDFn(targetAdminID); err != nil {
 		parsedErr := uerr.ExtractError(err)
 		if errors.Is(parsedErr, gorm.ErrRecordNotFound) {
+			log.Logger.Warn("Delete sub admin error: " + gorm.ErrRecordNotFound.Error())
 			return gorm.ErrRecordNotFound
 		}
 		log.Logger.Warn("Delete sub admin error: " + parsedErr.Error())
@@ -354,6 +389,7 @@ func handoverSuperAdminSrc(currentAdminID int, newSuperAdminID int) error {
 	if err := handoverSuperAdminFn(currentAdminID, newSuperAdminID); err != nil {
 		parsedErr := uerr.ExtractError(err)
 		if errors.Is(parsedErr, gorm.ErrRecordNotFound) {
+			log.Logger.Warn("Handover super admin error: " + gorm.ErrRecordNotFound.Error())
 			return gorm.ErrRecordNotFound
 		}
 		log.Logger.Warn("Handover super admin error: " + parsedErr.Error())

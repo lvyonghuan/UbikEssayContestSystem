@@ -6,6 +6,7 @@ import (
 	"main/database/pgsql"
 	"main/model"
 	_const "main/util/const"
+	"main/util/log"
 	"main/util/password"
 	"os"
 	"path/filepath"
@@ -135,21 +136,45 @@ type reviewEventInput struct {
 	EndTime    time.Time `json:"endTime"`
 }
 
+func reviewSrcWarn(message string) {
+	if log.Logger != nil {
+		log.Logger.Warn(message)
+	}
+}
+
+func newReviewSrcError(message string) error {
+	err := errors.New(message)
+	reviewSrcWarn("Review src error: " + err.Error())
+	return err
+}
+
+func newReviewSrcErrorf(format string, args ...any) error {
+	err := fmt.Errorf(format, args...)
+	reviewSrcWarn("Review src error: " + err.Error())
+	return err
+}
+
+func reviewSrcExtractError(err error) error {
+	parsedErr := uerr.ExtractError(err)
+	reviewSrcWarn("Review src error: " + parsedErr.Error())
+	return parsedErr
+}
+
 func createJudgeAccountSrc(adminID int, input judgeAccountInput) (model.Judge, error) {
 	input.JudgeName = strings.TrimSpace(input.JudgeName)
 	input.Password = strings.TrimSpace(input.Password)
 	if input.JudgeName == "" || input.Password == "" {
-		return model.Judge{}, errors.New("judgeName and password are required")
+		return model.Judge{}, newReviewSrcError("judgeName and password are required")
 	}
 
 	hashed, err := password.HashPassword(input.Password)
 	if err != nil {
-		return model.Judge{}, uerr.ExtractError(err)
+		return model.Judge{}, reviewSrcExtractError(err)
 	}
 
 	judge := model.Judge{JudgeName: input.JudgeName, Password: hashed}
 	if err = createJudgeDBFn(&judge); err != nil {
-		return model.Judge{}, uerr.ExtractError(err)
+		return model.Judge{}, reviewSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.Judges, _const.Create,
@@ -163,7 +188,7 @@ func batchCreateJudgeAccountsSrc(adminID int, inputs []judgeAccountInput) ([]mod
 	for _, input := range inputs {
 		judge, err := createJudgeAccountSrc(adminID, input)
 		if err != nil {
-			return created, err
+			return created, reviewSrcExtractError(err)
 		}
 		created = append(created, judge)
 	}
@@ -173,7 +198,7 @@ func batchCreateJudgeAccountsSrc(adminID int, inputs []judgeAccountInput) ([]mod
 
 func updateJudgeAccountSrc(adminID int, judgeID int, input judgeAccountInput) error {
 	if judgeID <= 0 {
-		return errors.New("invalid judge_id")
+		return newReviewSrcError("invalid judge_id")
 	}
 
 	updates := model.Judge{}
@@ -183,16 +208,16 @@ func updateJudgeAccountSrc(adminID int, judgeID int, input judgeAccountInput) er
 	if pwd := strings.TrimSpace(input.Password); pwd != "" {
 		hashed, err := password.HashPassword(pwd)
 		if err != nil {
-			return uerr.ExtractError(err)
+			return reviewSrcExtractError(err)
 		}
 		updates.Password = hashed
 	}
 	if strings.TrimSpace(updates.JudgeName) == "" && strings.TrimSpace(updates.Password) == "" {
-		return errors.New("nothing to update")
+		return newReviewSrcError("nothing to update")
 	}
 
 	if err := updateJudgeByIDDBFn(judgeID, &updates); err != nil {
-		return uerr.ExtractError(err)
+		return reviewSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.Judges, _const.Update,
@@ -203,11 +228,11 @@ func updateJudgeAccountSrc(adminID int, judgeID int, input judgeAccountInput) er
 
 func deleteJudgeAccountSrc(adminID int, judgeID int) error {
 	if judgeID <= 0 {
-		return errors.New("invalid judge_id")
+		return newReviewSrcError("invalid judge_id")
 	}
 
 	if err := deleteJudgeByIDDBFn(judgeID); err != nil {
-		return uerr.ExtractError(err)
+		return reviewSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.Judges, _const.Delete,
@@ -218,14 +243,14 @@ func deleteJudgeAccountSrc(adminID int, judgeID int) error {
 
 func createReviewEventSrc(adminID int, input reviewEventInput) (model.ReviewEvent, error) {
 	if input.TrackID <= 0 {
-		return model.ReviewEvent{}, errors.New("invalid trackID")
+		return model.ReviewEvent{}, newReviewSrcError("invalid trackID")
 	}
 	input.EventName = strings.TrimSpace(input.EventName)
 	if input.EventName == "" {
-		return model.ReviewEvent{}, errors.New("eventName is required")
+		return model.ReviewEvent{}, newReviewSrcError("eventName is required")
 	}
 	if !input.EndTime.IsZero() && !input.StartTime.IsZero() && input.EndTime.Before(input.StartTime) {
-		return model.ReviewEvent{}, errors.New("endTime must be after startTime")
+		return model.ReviewEvent{}, newReviewSrcError("endTime must be after startTime")
 	}
 
 	event := model.ReviewEvent{
@@ -236,7 +261,7 @@ func createReviewEventSrc(adminID int, input reviewEventInput) (model.ReviewEven
 		EndTime:    input.EndTime,
 	}
 	if err := createReviewEventDBFn(&event); err != nil {
-		return model.ReviewEvent{}, uerr.ExtractError(err)
+		return model.ReviewEvent{}, reviewSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.Reviews, _const.Create,
@@ -247,7 +272,7 @@ func createReviewEventSrc(adminID int, input reviewEventInput) (model.ReviewEven
 
 func updateReviewEventSrc(adminID int, eventID int, input reviewEventInput) error {
 	if eventID <= 0 {
-		return errors.New("invalid event_id")
+		return newReviewSrcError("invalid event_id")
 	}
 
 	updates := model.ReviewEvent{}
@@ -268,7 +293,7 @@ func updateReviewEventSrc(adminID int, eventID int, input reviewEventInput) erro
 	}
 
 	if err := updateReviewEventDBFn(eventID, &updates); err != nil {
-		return uerr.ExtractError(err)
+		return reviewSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.Reviews, _const.Update,
@@ -279,10 +304,10 @@ func updateReviewEventSrc(adminID int, eventID int, input reviewEventInput) erro
 
 func assignReviewEventJudgesSrc(adminID int, eventID int, judgeIDs []int) error {
 	if eventID <= 0 {
-		return errors.New("invalid event_id")
+		return newReviewSrcError("invalid event_id")
 	}
 	if _, err := getReviewEventByIDDBFn(eventID); err != nil {
-		return uerr.ExtractError(err)
+		return reviewSrcExtractError(err)
 	}
 
 	cleanIDs := make([]int, 0, len(judgeIDs))
@@ -295,15 +320,15 @@ func assignReviewEventJudgesSrc(adminID int, eventID int, judgeIDs []int) error 
 			continue
 		}
 		if _, err := getJudgeByIDDBFn(judgeID); err != nil {
-			return uerr.ExtractError(err)
+			return reviewSrcExtractError(err)
 		}
 
 		assignableCount, countErr := countAssignableWorksForJudgeInEvent(judgeID, eventID)
 		if countErr != nil {
-			return uerr.ExtractError(countErr)
+			return reviewSrcExtractError(countErr)
 		}
 		if assignableCount <= 0 {
-			return fmt.Errorf("judge %d has no assignable works in this event", judgeID)
+			return newReviewSrcErrorf("judge %d has no assignable works in this event", judgeID)
 		}
 
 		seen[judgeID] = struct{}{}
@@ -311,7 +336,7 @@ func assignReviewEventJudgesSrc(adminID int, eventID int, judgeIDs []int) error 
 	}
 
 	if err := replaceReviewEventJudgesDBFn(eventID, cleanIDs); err != nil {
-		return uerr.ExtractError(err)
+		return reviewSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.Reviews, _const.Update,
@@ -322,11 +347,11 @@ func assignReviewEventJudgesSrc(adminID int, eventID int, judgeIDs []int) error 
 
 func deleteReviewEventSrc(adminID int, eventID int) error {
 	if eventID <= 0 {
-		return errors.New("invalid event_id")
+		return newReviewSrcError("invalid event_id")
 	}
 
 	if err := deleteReviewEventDBFn(eventID); err != nil {
-		return uerr.ExtractError(err)
+		return reviewSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.Reviews, _const.Delete,
@@ -338,24 +363,24 @@ func deleteReviewEventSrc(adminID int, eventID int) error {
 func getReviewEventProgressSrc(eventID int) (reviewEventProgress, error) {
 	event, err := getReviewEventByIDDBFn(eventID)
 	if err != nil {
-		return reviewEventProgress{}, uerr.ExtractError(err)
+		return reviewEventProgress{}, reviewSrcExtractError(err)
 	}
 
 	judgeIDs, err := listJudgeIDsByReviewEventDBFn(eventID)
 	if err != nil {
-		return reviewEventProgress{}, uerr.ExtractError(err)
+		return reviewEventProgress{}, reviewSrcExtractError(err)
 	}
 
 	works, err := getReviewWorksByEventDBFn(eventID, 0, 1000000)
 	if err != nil {
-		return reviewEventProgress{}, uerr.ExtractError(err)
+		return reviewEventProgress{}, reviewSrcExtractError(err)
 	}
 
 	completedWorks := 0
 	for _, work := range works {
 		assignableJudgeIDs, assignableErr := getAssignableJudgeIDsForWorkInEvent(eventID, work.WorkID)
 		if assignableErr != nil {
-			return reviewEventProgress{}, uerr.ExtractError(assignableErr)
+			return reviewEventProgress{}, reviewSrcExtractError(assignableErr)
 		}
 		assignableJudgeSet := make(map[int]struct{}, len(assignableJudgeIDs))
 		for _, judgeID := range assignableJudgeIDs {
@@ -364,7 +389,7 @@ func getReviewEventProgressSrc(eventID int) (reviewEventProgress, error) {
 
 		reviews, reviewErr := listReviewsByWorkAndEventDBFn(work.WorkID, eventID)
 		if reviewErr != nil {
-			return reviewEventProgress{}, uerr.ExtractError(reviewErr)
+			return reviewEventProgress{}, reviewSrcExtractError(reviewErr)
 		}
 		submittedJudgeSet := map[int]struct{}{}
 		for _, review := range reviews {
@@ -413,12 +438,12 @@ func getReviewEventProgressSrc(eventID int) (reviewEventProgress, error) {
 
 func listTrackStatusesSrc(trackID int) ([]string, error) {
 	if trackID <= 0 {
-		return nil, errors.New("invalid track_id")
+		return nil, newReviewSrcError("invalid track_id")
 	}
 
 	statuses, err := getDistinctTrackStatusesDBFn(trackID)
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, reviewSrcExtractError(err)
 	}
 
 	return statuses, nil
@@ -427,12 +452,12 @@ func listTrackStatusesSrc(trackID int) ([]string, error) {
 func getWorkReviewStatusSrc(workID int) (workReviewStatus, error) {
 	work, err := getWorkByIDFn(workID)
 	if err != nil {
-		return workReviewStatus{}, uerr.ExtractError(err)
+		return workReviewStatus{}, reviewSrcExtractError(err)
 	}
 
 	events, err := listReviewEventsByTrackIDDBFn(work.TrackID)
 	if err != nil {
-		return workReviewStatus{}, uerr.ExtractError(err)
+		return workReviewStatus{}, reviewSrcExtractError(err)
 	}
 
 	items := make([]workEventReview, 0, len(events))
@@ -447,7 +472,7 @@ func getWorkReviewStatusSrc(workID int) (workReviewStatus, error) {
 
 		assignableJudgeIDs, assignableErr := getAssignableJudgeIDsForWorkInEvent(event.EventID, workID)
 		if assignableErr != nil {
-			return workReviewStatus{}, uerr.ExtractError(assignableErr)
+			return workReviewStatus{}, reviewSrcExtractError(assignableErr)
 		}
 		assignableJudgeSet := make(map[int]struct{}, len(assignableJudgeIDs))
 		for _, judgeID := range assignableJudgeIDs {
@@ -456,7 +481,7 @@ func getWorkReviewStatusSrc(workID int) (workReviewStatus, error) {
 
 		reviews, reviewErr := listReviewsByWorkAndEventDBFn(workID, event.EventID)
 		if reviewErr != nil {
-			return workReviewStatus{}, uerr.ExtractError(reviewErr)
+			return workReviewStatus{}, reviewSrcExtractError(reviewErr)
 		}
 		submittedJudgeSet := map[int]struct{}{}
 		for _, review := range reviews {
@@ -485,7 +510,7 @@ func getWorkReviewStatusSrc(workID int) (workReviewStatus, error) {
 func getWorkReviewResultsSrc(workID int) ([]model.ReviewResult, error) {
 	results, err := listReviewResultsByWorkIDDBFn(workID)
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, reviewSrcExtractError(err)
 	}
 
 	return results, nil
@@ -494,12 +519,12 @@ func getWorkReviewResultsSrc(workID int) ([]model.ReviewResult, error) {
 func regenerateWorkReviewResultsSrc(workID int) ([]model.ReviewResult, error) {
 	work, err := getWorkByIDFn(workID)
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, reviewSrcExtractError(err)
 	}
 
 	events, err := listReviewEventsByTrackIDDBFn(work.TrackID)
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, reviewSrcExtractError(err)
 	}
 
 	regenerated := make([]model.ReviewResult, 0, len(events))
@@ -520,7 +545,7 @@ func regenerateWorkReviewResultsSrc(workID int) ([]model.ReviewResult, error) {
 func rankTrackWorksSrc(trackID int) ([]trackRankItem, error) {
 	results, err := listReviewResultsByTrackIDDBFn(trackID)
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, reviewSrcExtractError(err)
 	}
 
 	ranks := make([]trackRankItem, 0, len(results))
@@ -555,7 +580,7 @@ func rankTrackWorksSrc(trackID int) ([]trackRankItem, error) {
 func exportTrackReviewExcelSrc(trackID int) (string, error) {
 	ranks, err := rankTrackWorksSrc(trackID)
 	if err != nil {
-		return "", err
+		return "", reviewSrcExtractError(err)
 	}
 
 	excel := newExcelFileFn()
@@ -593,12 +618,14 @@ func exportTrackReviewExcelSrc(trackID int) (string, error) {
 
 	tmpDir := filepath.Join(os.TempDir(), "ubik_exports")
 	if err = os.MkdirAll(tmpDir, os.ModePerm); err != nil {
-		return "", err
+		wrappedErr := uerr.NewError(err)
+		return "", reviewSrcExtractError(wrappedErr)
 	}
 
 	outputPath := filepath.Join(tmpDir, fmt.Sprintf("track_%d_review_%d.xlsx", trackID, time.Now().UnixNano()))
 	if err = excel.SaveAs(outputPath); err != nil {
-		return "", err
+		wrappedErr := uerr.NewError(err)
+		return "", reviewSrcExtractError(wrappedErr)
 	}
 
 	return outputPath, nil
@@ -607,7 +634,7 @@ func exportTrackReviewExcelSrc(trackID int) (string, error) {
 func getDashboardOverviewSrc() (dashboardOverview, error) {
 	contests, err := getContestListDBFn()
 	if err != nil {
-		return dashboardOverview{}, uerr.ExtractError(err)
+		return dashboardOverview{}, reviewSrcExtractError(err)
 	}
 
 	trackSubmissionCount := map[string]int{}
@@ -619,12 +646,12 @@ func getDashboardOverviewSrc() (dashboardOverview, error) {
 	for _, contest := range contests {
 		tracks, trackErr := getTrackListDBFn(contest.ContestID)
 		if trackErr != nil {
-			return dashboardOverview{}, uerr.ExtractError(trackErr)
+			return dashboardOverview{}, reviewSrcExtractError(trackErr)
 		}
 		for _, track := range tracks {
 			works, worksErr := getWorksByTrackFn(track.TrackID)
 			if worksErr != nil {
-				return dashboardOverview{}, worksErr
+				return dashboardOverview{}, reviewSrcExtractError(worksErr)
 			}
 			trackSubmissionCount[strconv.Itoa(track.TrackID)] = len(works)
 			for _, work := range works {
@@ -633,12 +660,12 @@ func getDashboardOverviewSrc() (dashboardOverview, error) {
 
 			events, eventsErr := listReviewEventsByTrackIDDBFn(track.TrackID)
 			if eventsErr != nil {
-				return dashboardOverview{}, uerr.ExtractError(eventsErr)
+				return dashboardOverview{}, reviewSrcExtractError(eventsErr)
 			}
 			for _, event := range events {
 				judgeIDs, judgeErr := listJudgeIDsByReviewEventDBFn(event.EventID)
 				if judgeErr != nil {
-					return dashboardOverview{}, uerr.ExtractError(judgeErr)
+					return dashboardOverview{}, reviewSrcExtractError(judgeErr)
 				}
 				for _, judgeID := range judgeIDs {
 					totalTrackJudgesSet[judgeID] = struct{}{}
@@ -651,12 +678,12 @@ func getDashboardOverviewSrc() (dashboardOverview, error) {
 
 				eventWorks, ewErr := getReviewWorksByEventDBFn(event.EventID, 0, 1000000)
 				if ewErr != nil {
-					return dashboardOverview{}, uerr.ExtractError(ewErr)
+					return dashboardOverview{}, reviewSrcExtractError(ewErr)
 				}
 				for _, work := range eventWorks {
 					assignableJudgeIDs, assignableErr := getAssignableJudgeIDsForWorkInEvent(event.EventID, work.WorkID)
 					if assignableErr != nil {
-						return dashboardOverview{}, uerr.ExtractError(assignableErr)
+						return dashboardOverview{}, reviewSrcExtractError(assignableErr)
 					}
 					assignableJudgeSet := make(map[int]struct{}, len(assignableJudgeIDs))
 					for _, judgeID := range assignableJudgeIDs {
@@ -665,7 +692,7 @@ func getDashboardOverviewSrc() (dashboardOverview, error) {
 
 					reviews, reviewErr := listReviewsByWorkAndEventDBFn(work.WorkID, event.EventID)
 					if reviewErr != nil {
-						return dashboardOverview{}, uerr.ExtractError(reviewErr)
+						return dashboardOverview{}, reviewSrcExtractError(reviewErr)
 					}
 					submittedJudges := map[int]struct{}{}
 					for _, review := range reviews {
@@ -693,14 +720,14 @@ func getDashboardOverviewSrc() (dashboardOverview, error) {
 func getContestTrackStatusStatsSrc(contestID int) ([]contestTrackStatusStat, error) {
 	tracks, err := getTrackListDBFn(contestID)
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, reviewSrcExtractError(err)
 	}
 
 	stats := make([]contestTrackStatusStat, 0, len(tracks))
 	for _, track := range tracks {
 		works, worksErr := getWorksByTrackFn(track.TrackID)
 		if worksErr != nil {
-			return nil, worksErr
+			return nil, reviewSrcExtractError(worksErr)
 		}
 		statusCounts := map[string]int{}
 		authors := map[int]struct{}{}
@@ -735,7 +762,7 @@ func getContestTrackStatusStatsSrc(contestID int) ([]contestTrackStatusStat, err
 func getContestDailySubmissionsStatsSrc(contestID int) ([]contestDailySubmissionStat, error) {
 	tracks, err := getTrackListDBFn(contestID)
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, reviewSrcExtractError(err)
 	}
 
 	loc, locErr := time.LoadLocation("Asia/Shanghai")
@@ -747,7 +774,7 @@ func getContestDailySubmissionsStatsSrc(contestID int) ([]contestDailySubmission
 	for _, track := range tracks {
 		works, worksErr := getWorksByTrackFn(track.TrackID)
 		if worksErr != nil {
-			return nil, worksErr
+			return nil, reviewSrcExtractError(worksErr)
 		}
 		for _, work := range works {
 			timeValue := ""
@@ -787,14 +814,14 @@ func getContestDailySubmissionsStatsSrc(contestID int) ([]contestDailySubmission
 func getContestJudgeProgressStatsSrc(contestID int) ([]judgeProgressStat, error) {
 	events, err := listReviewEventsByContestIDDBFn(contestID)
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, reviewSrcExtractError(err)
 	}
 
 	agg := map[int]*judgeProgressStat{}
 	for _, event := range events {
 		judgeIDs, judgeErr := listJudgeIDsByReviewEventDBFn(event.EventID)
 		if judgeErr != nil {
-			return nil, uerr.ExtractError(judgeErr)
+			return nil, reviewSrcExtractError(judgeErr)
 		}
 		for _, judgeID := range judgeIDs {
 			assigned, _ := countAssignedWorksForJudgeInEvent(judgeID, event.EventID)
@@ -833,21 +860,21 @@ func getContestJudgeProgressStatsSrc(contestID int) ([]judgeProgressStat, error)
 func regenerateContestReviewResultsSrc(contestID int) (int, error) {
 	events, err := listReviewEventsByContestIDDBFn(contestID)
 	if err != nil {
-		return 0, uerr.ExtractError(err)
+		return 0, reviewSrcExtractError(err)
 	}
 
 	generated := 0
 	for _, event := range events {
 		if err := deleteReviewResultsByEventIDDBFn(event.EventID); err != nil {
-			return generated, uerr.ExtractError(err)
+			return generated, reviewSrcExtractError(err)
 		}
 		works, workErr := getReviewWorksByEventDBFn(event.EventID, 0, 1000000)
 		if workErr != nil {
-			return generated, uerr.ExtractError(workErr)
+			return generated, reviewSrcExtractError(workErr)
 		}
 		for _, work := range works {
 			if _, genErr := generateReviewResultForWorkAndEvent(work.WorkID, event.EventID); genErr != nil {
-				return generated, genErr
+				return generated, reviewSrcExtractError(genErr)
 			}
 			generated++
 		}
@@ -858,14 +885,14 @@ func regenerateContestReviewResultsSrc(contestID int) (int, error) {
 
 func updateJudgeDeadlineReminderSrc(eventID int, judgeID int, deadlineAt time.Time) error {
 	if eventID <= 0 || judgeID <= 0 {
-		return errors.New("invalid event_id or judge_id")
+		return newReviewSrcError("invalid event_id or judge_id")
 	}
 	if deadlineAt.IsZero() {
-		return errors.New("deadlineAt is required")
+		return newReviewSrcError("deadlineAt is required")
 	}
 
 	if err := updateReviewEventJudgeDeadlineDBFn(eventID, judgeID, &deadlineAt); err != nil {
-		return uerr.ExtractError(err)
+		return reviewSrcExtractError(err)
 	}
 
 	return nil
@@ -874,11 +901,11 @@ func updateJudgeDeadlineReminderSrc(eventID int, judgeID int, deadlineAt time.Ti
 func generateReviewResultForWorkAndEvent(workID int, eventID int) (model.ReviewResult, error) {
 	reviews, err := listReviewsByWorkAndEventDBFn(workID, eventID)
 	if err != nil {
-		return model.ReviewResult{}, uerr.ExtractError(err)
+		return model.ReviewResult{}, reviewSrcExtractError(err)
 	}
 	judgeIDs, judgeErr := getAssignableJudgeIDsForWorkInEvent(eventID, workID)
 	if judgeErr != nil {
-		return model.ReviewResult{}, uerr.ExtractError(judgeErr)
+		return model.ReviewResult{}, reviewSrcExtractError(judgeErr)
 	}
 
 	totalScore := 0.0
@@ -914,7 +941,7 @@ func generateReviewResultForWorkAndEvent(workID int, eventID int) (model.ReviewR
 
 	result, upsertErr := upsertReviewResultDBFn(workID, eventID, payload)
 	if upsertErr != nil {
-		return model.ReviewResult{}, uerr.ExtractError(upsertErr)
+		return model.ReviewResult{}, reviewSrcExtractError(upsertErr)
 	}
 
 	return result, nil

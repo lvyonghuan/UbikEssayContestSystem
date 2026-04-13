@@ -64,22 +64,39 @@ var (
 func loginSrc(admin model.Admin) (token.ResponseToken, error) {
 	dbAdmin, err := findAdminByUsernameFn(admin.AdminName)
 	if err != nil {
-		return token.ResponseToken{}, err
+		log.Logger.Warn("Admin login query error: " + err.Error())
+		return token.ResponseToken{}, uerr.ExtractError(err)
 	}
 	if !dbAdmin.IsActive {
-		return token.ResponseToken{}, uerr.NewError(errors.New("admin account is disabled"))
+		err = errors.New("admin account is disabled")
+		log.Logger.Warn("Admin login error: " + err.Error())
+		return token.ResponseToken{}, err
 	}
 
 	isSame := password.CheckPasswordHash(admin.Password, dbAdmin.Password)
 	if !isSame {
-		return token.ResponseToken{}, uerr.NewError(errors.New("login error"))
+		err = errors.New("login error")
+		log.Logger.Warn("Admin login error: " + err.Error())
+		return token.ResponseToken{}, err
 	}
 
-	return genTokenAndRefreshTokenFn(int64(dbAdmin.AdminID), _const.RoleAdmin)
+	tokens, err := genTokenAndRefreshTokenFn(int64(dbAdmin.AdminID), _const.RoleAdmin)
+	if err != nil {
+		log.Logger.Warn("Admin login generate token error: " + err.Error())
+		return token.ResponseToken{}, uerr.ExtractError(err)
+	}
+
+	return tokens, nil
 }
 
 func refreshTokenSrc(adminID int64) (token.ResponseToken, error) {
-	return genTokenAndRefreshTokenFn(adminID, _const.RoleAdmin)
+	tokens, err := genTokenAndRefreshTokenFn(adminID, _const.RoleAdmin)
+	if err != nil {
+		log.Logger.Warn("Admin refresh token src error: " + err.Error())
+		return token.ResponseToken{}, uerr.ExtractError(err)
+	}
+
+	return tokens, nil
 }
 
 func createContestSrc(adminID int, contest *model.Contest) error {
@@ -241,6 +258,7 @@ func getAuthorByIDSrc(authorID int) (model.Author, error) {
 	if err != nil {
 		parsedErr := uerr.ExtractError(err)
 		if errors.Is(parsedErr, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(parsedErr.Error()), "record not found") {
+			log.Logger.Warn("Get author by id error: " + errAuthorNotFound.Error())
 			return model.Author{}, errAuthorNotFound
 		}
 		log.Logger.Warn("Get author by id error: " + err.Error())
@@ -255,6 +273,7 @@ func updateAuthorSrc(adminID int, authorID int, updatedAuthor *model.Author) (mo
 	if err != nil {
 		parsedErr := uerr.ExtractError(err)
 		if errors.Is(parsedErr, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(parsedErr.Error()), "record not found") {
+			log.Logger.Warn("Update author error: " + errAuthorNotFound.Error())
 			return model.Author{}, errAuthorNotFound
 		}
 		log.Logger.Warn("Update author error: " + err.Error())
@@ -276,6 +295,7 @@ func deleteAuthorSrc(adminID int, authorID int) error {
 	if err != nil {
 		parsedErr := uerr.ExtractError(err)
 		if errors.Is(parsedErr, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(parsedErr.Error()), "record not found") {
+			log.Logger.Warn("Delete author error: " + errAuthorNotFound.Error())
 			return errAuthorNotFound
 		}
 		log.Logger.Warn("Delete author error: " + err.Error())
@@ -297,6 +317,7 @@ func getWorkByIDSrc(workID int) (model.Work, error) {
 	if err != nil {
 		parsedErr := uerr.ExtractError(err)
 		if errors.Is(parsedErr, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(parsedErr.Error()), "record not found") {
+			log.Logger.Warn("Get work by id error: " + errWorkNotFound.Error())
 			return model.Work{}, errWorkNotFound
 		}
 		log.Logger.Warn("Get work by id error: " + err.Error())
@@ -342,10 +363,17 @@ func queryWorksSrc(trackID *int, workStatus string, workTitle string, authorName
 func getWorkFilePathSrc(workID int) (string, error) {
 	work, err := getWorkByIDSrc(workID)
 	if err != nil {
-		return "", err
+		log.Logger.Warn("Get work file path get work error: " + err.Error())
+		return "", uerr.ExtractError(err)
 	}
 
-	return resolveWorkFilePath(work)
+	filePath, err := resolveWorkFilePath(work)
+	if err != nil {
+		log.Logger.Warn("Get work file path resolve file error: " + err.Error())
+		return "", uerr.ExtractError(err)
+	}
+
+	return filePath, nil
 }
 
 func resolveWorkFilePath(work model.Work) (string, error) {
@@ -353,9 +381,12 @@ func resolveWorkFilePath(work model.Work) (string, error) {
 	entries, err := readDirFn(dstDir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			log.Logger.Warn("Resolve work file path error: " + errWorkFileNotFound.Error())
 			return "", errWorkFileNotFound
 		}
-		return "", uerr.ExtractError(err)
+		wrappedErr := uerr.NewError(err)
+		log.Logger.Warn("Resolve work file path read dir error: " + wrappedErr.Error())
+		return "", uerr.ExtractError(wrappedErr)
 	}
 
 	prefix := strconv.Itoa(work.WorkID) + "."
@@ -401,6 +432,7 @@ func resolveWorkFilePath(work model.Work) (string, error) {
 	}
 
 	if selectedName == "" {
+		log.Logger.Warn("Resolve work file path error: " + errWorkFileNotFound.Error())
 		return "", errWorkFileNotFound
 	}
 
@@ -410,13 +442,14 @@ func resolveWorkFilePath(work model.Work) (string, error) {
 func deleteWorkSrc(adminID, workID int) error {
 	work, err := getWorkByIDSrc(workID)
 	if err != nil {
-		return err
+		log.Logger.Warn("Delete work get work error: " + err.Error())
+		return uerr.ExtractError(err)
 	}
 
 	err = deleteWorkFiles(work)
 	if err != nil {
 		log.Logger.Warn("Delete work files error: " + err.Error())
-		return err
+		return uerr.ExtractError(err)
 	}
 
 	err = deleteWorkByIDFn(workID)
@@ -450,7 +483,9 @@ func deleteWorkFiles(work model.Work) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return uerr.ExtractError(err)
+		wrappedErr := uerr.NewError(err)
+		log.Logger.Warn("Delete work files read dir error: " + wrappedErr.Error())
+		return uerr.ExtractError(wrappedErr)
 	}
 
 	for _, entry := range entries {
@@ -464,7 +499,9 @@ func deleteWorkFiles(work model.Work) error {
 		}
 
 		if rmErr := removeFn(filepath.Join(dstDir, name)); rmErr != nil {
-			return uerr.ExtractError(rmErr)
+			wrappedErr := uerr.NewError(rmErr)
+			log.Logger.Warn("Delete work files remove error: " + wrappedErr.Error())
+			return uerr.ExtractError(wrappedErr)
 		}
 	}
 

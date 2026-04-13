@@ -45,8 +45,9 @@ func normalizeContestTimezone(contest *model.Contest) {
 func getContestSrc() ([]model.Contest, error) {
 	contests, err := getContestListFn()
 	if err != nil {
-		log.Logger.Error(errors.New("GetContestList error: " + err.Error()))
-		return nil, uerr.ExtractError(err)
+		parsedErr := uerr.ExtractError(err)
+		log.Logger.Error(errors.New("GetContestList error: " + parsedErr.Error()))
+		return nil, parsedErr
 	}
 
 	for i := range contests {
@@ -59,8 +60,9 @@ func getContestSrc() ([]model.Contest, error) {
 func getTracksSrc(contestID int) ([]model.Track, error) {
 	tracks, err := getTrackListFn(contestID)
 	if err != nil {
-		log.Logger.Error(errors.New("GetTrackList error: " + err.Error()))
-		return nil, uerr.ExtractError(err)
+		parsedErr := uerr.ExtractError(err)
+		log.Logger.Error(errors.New("GetTrackList error: " + parsedErr.Error()))
+		return nil, parsedErr
 	}
 
 	return tracks, nil
@@ -71,6 +73,7 @@ func getContestByIDSrc(contestID int) (model.Contest, error) {
 	if err != nil {
 		parsedErr := uerr.ExtractError(err)
 		if errors.Is(parsedErr, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(parsedErr.Error()), "record not found") {
+			log.Logger.Error(errors.New("GetContestByID error: " + errContestNotFound.Error()))
 			return model.Contest{}, errContestNotFound
 		}
 		log.Logger.Error(errors.New("GetContestByID error: " + parsedErr.Error()))
@@ -87,6 +90,7 @@ func getTrackByIDSrc(trackID int) (model.Track, error) {
 	if err != nil {
 		parsedErr := uerr.ExtractError(err)
 		if errors.Is(parsedErr, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(parsedErr.Error()), "record not found") {
+			log.Logger.Error(errors.New("GetTrackByID error: " + errTrackNotFound.Error()))
 			return model.Track{}, errTrackNotFound
 		}
 		log.Logger.Error(errors.New("GetTrackByID error: " + parsedErr.Error()))

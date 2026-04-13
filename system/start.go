@@ -1,9 +1,13 @@
 package system
 
 import (
+	"errors"
 	"main/conf"
 	"main/database/pgsql"
 	"main/database/redis"
+	"main/util/log"
+
+	"github.com/lvyonghuan/Ubik-Util/uerr"
 )
 
 var (
@@ -20,13 +24,17 @@ func SysStart(apiConf conf.APIConfig) {
 	// 初始化比赛信息redis缓存
 	err := initContestRedisCacheFn()
 	if err != nil {
-		panic(err)
+		parsedErr := uerr.ExtractError(err)
+		log.Logger.Error(errors.New("System start init contest redis cache error: " + parsedErr.Error()))
+		panic(parsedErr)
 	}
 
 	// 初始化比赛结束定时调度
 	err = initContestEndSchedulesFn()
 	if err != nil {
-		panic(err)
+		parsedErr := uerr.ExtractError(err)
+		log.Logger.Error(errors.New("System start init contest end schedule error: " + parsedErr.Error()))
+		panic(parsedErr)
 	}
 
 	// 初始化路由

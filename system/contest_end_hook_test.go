@@ -3,16 +3,31 @@ package system
 import (
 	"context"
 	"errors"
+	"io"
 	"main/database/pgsql"
 	"main/model"
 	_const "main/util/const"
+	"main/util/log"
 	"main/util/scriptflow"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
+
+type mockContestEndLogger struct {
+	debugs []string
+	warns  []string
+}
+
+func (m *mockContestEndLogger) Debug(v string)  { m.debugs = append(m.debugs, v) }
+func (m *mockContestEndLogger) Info(v string)   {}
+func (m *mockContestEndLogger) Warn(v string)   { m.warns = append(m.warns, v) }
+func (m *mockContestEndLogger) Error(v error)   {}
+func (m *mockContestEndLogger) Fatal(v error)   {}
+func (m *mockContestEndLogger) System(v string) {}
 
 func backupContestEndHookDeps(t *testing.T) {
 	origGetTracksByContestForEndFn := getTracksByContestForEndFn
@@ -28,6 +43,13 @@ func backupContestEndHookDeps(t *testing.T) {
 	origConvertDocxToPDFForEndFn := convertDocxToPDFForEndFn
 	origReadDirForEndFn := readDirForEndFn
 	origMkdirAllForEndFn := mkdirAllForEndFn
+	origRenameFileForEndFn := renameFileForEndFn
+	origOpenFileForEndFn := openFileForEndFn
+	origCreateFileForEndFn := createFileForEndFn
+	origCopyFileForEndFn := copyFileForEndFn
+	origRemoveFileForEndFn := removeFileForEndFn
+	origSleepForEndFn := sleepForEndFn
+	origCleanupRetryBackoffsForEnd := append([]time.Duration(nil), cleanupRetryBackoffsForEnd...)
 	origExecuteScriptChainForEndFn := executeScriptChainForEndFn
 
 	t.Cleanup(func() {
@@ -44,6 +66,13 @@ func backupContestEndHookDeps(t *testing.T) {
 		convertDocxToPDFForEndFn = origConvertDocxToPDFForEndFn
 		readDirForEndFn = origReadDirForEndFn
 		mkdirAllForEndFn = origMkdirAllForEndFn
+		renameFileForEndFn = origRenameFileForEndFn
+		openFileForEndFn = origOpenFileForEndFn
+		createFileForEndFn = origCreateFileForEndFn
+		copyFileForEndFn = origCopyFileForEndFn
+		removeFileForEndFn = origRemoveFileForEndFn
+		sleepForEndFn = origSleepForEndFn
+		cleanupRetryBackoffsForEnd = origCleanupRetryBackoffsForEnd
 		executeScriptChainForEndFn = origExecuteScriptChainForEndFn
 	})
 }
@@ -253,5 +282,142 @@ func TestConvertDocxToPDFValidation(t *testing.T) {
 	}
 	if err := convertDocxToPDF(context.Background(), "demo.docx", "demo.txt"); err == nil {
 		t.Fatal("expected destination extension validation error")
+	}
+}
+
+func TestMoveFileForEndIgnoresSourceCleanupError(t *testing.T) {
+	backupContestEndHookDeps(t)
+
+	tempDir := t.TempDir()
+	srcPath := filepath.Join(tempDir, "src.pdf")
+	dstPath := filepath.Join(tempDir, "dst.pdf")
+	loggerBackup := log.Logger
+	mockLogger := &mockContestEndLogger{}
+	log.Logger = mockLogger
+	t.Cleanup(func() {
+		log.Logger = loggerBackup
+	})
+
+	content := []byte("contest-end-pdf")
+	if err := os.WriteFile(srcPath, content, 0o644); err != nil {
+		t.Fatalf("write source file failed: %v", err)
+	}
+
+	cleanupRetryBackoffsForEnd = []time.Duration{time.Millisecond, time.Millisecond}
+	sleepCalls := 0
+	sleepForEndFn = func(d time.Duration) {
+		sleepCalls++
+	}
+
+	cleanupCalls := 0
+	renameFileForEndFn = func(oldpath string, newpath string) error {
+		return errors.New("rename cross-device")
+	}
+	removeFileForEndFn = func(name string) error {
+		cleanupCalls++
+		if cleanupCalls < 3 {
+			return errors.New("file in use")
+		}
+		return nil
+	}
+
+	if err := moveFileForEnd(srcPath, dstPath); err != nil {
+		t.Fatalf("moveFileForEnd should ignore cleanup error, got: %v", err)
+	}
+	if cleanupCalls != 3 {
+		t.Fatalf("expected 3 cleanup attempts, got %d", cleanupCalls)
+	}
+	if sleepCalls != 2 {
+		t.Fatalf("expected 2 retry sleeps, got %d", sleepCalls)
+	}
+	if len(mockLogger.warns) != 0 {
+		t.Fatalf("expected no final warn after cleanup recovery, got %d", len(mockLogger.warns))
+	}
+	if len(mockLogger.debugs) == 0 {
+		t.Fatal("expected a debug recovery log when cleanup succeeds after retry")
+	}
+
+	dstContent, err := os.ReadFile(dstPath)
+	if err != nil {
+		t.Fatalf("read destination file failed: %v", err)
+	}
+	if string(dstContent) != string(content) {
+		t.Fatalf("unexpected destination content: got=%q want=%q", string(dstContent), string(content))
+	}
+}
+
+func TestMoveFileForEndReturnsCopyError(t *testing.T) {
+	backupContestEndHookDeps(t)
+
+	tempDir := t.TempDir()
+	srcPath := filepath.Join(tempDir, "src.pdf")
+	dstPath := filepath.Join(tempDir, "dst.pdf")
+
+	if err := os.WriteFile(srcPath, []byte("payload"), 0o644); err != nil {
+		t.Fatalf("write source file failed: %v", err)
+	}
+
+	renameFileForEndFn = func(oldpath string, newpath string) error {
+		return errors.New("rename cross-device")
+	}
+	copyFileForEndFn = func(dst io.Writer, src io.Reader) (int64, error) {
+		return 0, errors.New("copy failed")
+	}
+
+	err := moveFileForEnd(srcPath, dstPath)
+	if err == nil || !strings.Contains(err.Error(), "copy failed") {
+		t.Fatalf("expected copy failure, got: %v", err)
+	}
+}
+
+func TestMoveFileForEndWarnsOnceAfterCleanupRetryExhausted(t *testing.T) {
+	backupContestEndHookDeps(t)
+
+	tempDir := t.TempDir()
+	srcPath := filepath.Join(tempDir, "src.pdf")
+	dstPath := filepath.Join(tempDir, "dst.pdf")
+	if err := os.WriteFile(srcPath, []byte("payload"), 0o644); err != nil {
+		t.Fatalf("write source file failed: %v", err)
+	}
+
+	loggerBackup := log.Logger
+	mockLogger := &mockContestEndLogger{}
+	log.Logger = mockLogger
+	t.Cleanup(func() {
+		log.Logger = loggerBackup
+	})
+
+	cleanupRetryBackoffsForEnd = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+	sleepCalls := 0
+	sleepForEndFn = func(d time.Duration) {
+		sleepCalls++
+	}
+
+	cleanupCalls := 0
+	renameFileForEndFn = func(oldpath string, newpath string) error {
+		return errors.New("rename cross-device")
+	}
+	removeFileForEndFn = func(name string) error {
+		cleanupCalls++
+		return errors.New("file in use")
+	}
+
+	if err := moveFileForEnd(srcPath, dstPath); err != nil {
+		t.Fatalf("moveFileForEnd should not fail on cleanup retries exhausted, got: %v", err)
+	}
+	if cleanupCalls != 4 {
+		t.Fatalf("expected 4 cleanup attempts, got %d", cleanupCalls)
+	}
+	if sleepCalls != 3 {
+		t.Fatalf("expected 3 retry sleeps, got %d", sleepCalls)
+	}
+	if len(mockLogger.warns) != 1 {
+		t.Fatalf("expected exactly one final warn, got %d", len(mockLogger.warns))
+	}
+	if !strings.Contains(mockLogger.warns[0], "failed after 4 attempts") {
+		t.Fatalf("unexpected warn message: %s", mockLogger.warns[0])
+	}
+	if !strings.Contains(mockLogger.warns[0], srcPath) || !strings.Contains(mockLogger.warns[0], dstPath) {
+		t.Fatalf("warn should contain src and dst path, got: %s", mockLogger.warns[0])
 	}
 }

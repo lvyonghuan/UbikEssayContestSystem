@@ -1,6 +1,7 @@
 package system
 
 import (
+	"errors"
 	"main/database/pgsql"
 	"main/model"
 	"main/util/log"
@@ -81,6 +82,6 @@ func triggerContestEnd(contestID int) {
 	cancelContestEndSchedule(contestID)
 
 	if err := runContestEndForContestFn(contestID); err != nil {
-		log.Logger.Warn("Run contest_end hook failed: " + err.Error())
+		log.Logger.Error(errors.New("Run contest_end hook failed: " + err.Error()))
 	}
 }

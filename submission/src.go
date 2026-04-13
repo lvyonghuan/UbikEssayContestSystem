@@ -50,6 +50,24 @@ var (
 	removeFn  = os.Remove
 )
 
+func submissionSrcWarn(message string) {
+	if log.Logger != nil {
+		log.Logger.Warn(message)
+	}
+}
+
+func newSubmissionSrcError(message string) error {
+	err := errors.New(message)
+	submissionSrcWarn("Submission src error: " + err.Error())
+	return err
+}
+
+func submissionSrcExtractError(err error) error {
+	parsedErr := uerr.ExtractError(err)
+	submissionSrcWarn("Submission src error: " + parsedErr.Error())
+	return parsedErr
+}
+
 func registerAuthorSrc(author *model.Author) error {
 	tmpAuthor := model.Author{
 		AuthorName: author.AuthorName,
@@ -60,22 +78,19 @@ func registerAuthorSrc(author *model.Author) error {
 		if errors.Is(err, _const.UsernameNotExist) {
 			hashedPassword, hashErr := password.HashPassword(author.Password)
 			if hashErr != nil {
-				log.Logger.Warn("Register author hash password failed: " + hashErr.Error())
-				return uerr.ExtractError(hashErr)
+				return submissionSrcExtractError(hashErr)
 			}
 			author.Password = hashedPassword
 
 			err = createAuthorFn(author)
 			if err != nil {
-				log.Logger.Warn("Register author failed: " + err.Error())
-				return uerr.ExtractError(err)
+				return submissionSrcExtractError(err)
 			}
 		} else {
-			log.Logger.Warn("Failed to check if username exists: " + err.Error())
-			return uerr.ExtractError(err)
+			return submissionSrcExtractError(err)
 		}
 	} else {
-		return errors.New("username already exists")
+		return newSubmissionSrcError("username already exists")
 	}
 
 	return nil
@@ -85,32 +100,34 @@ func authorLoginSrc(author *model.Author) (token.ResponseToken, error) {
 	tempAuthor := model.Author{AuthorName: author.AuthorName}
 	err := getAuthorByAuthorNameFn(&tempAuthor)
 	if err != nil {
-		log.Logger.Warn("Author login failed: " + err.Error())
-		return token.ResponseToken{}, uerr.ExtractError(err)
+		return token.ResponseToken{}, submissionSrcExtractError(err)
 	}
 
 	if !password.CheckPasswordHash(author.Password, tempAuthor.Password) {
-		return token.ResponseToken{}, errors.New("bad request")
+		return token.ResponseToken{}, newSubmissionSrcError("bad request")
 	}
 
 	tokens, err := token.GenTokenAndRefreshToken(int64(tempAuthor.AuthorID), _const.RoleAuthor)
 	if err != nil {
-		log.Logger.Warn("Generate token failed: " + err.Error())
-		return token.ResponseToken{}, uerr.ExtractError(err)
+		return token.ResponseToken{}, submissionSrcExtractError(err)
 	}
 
 	return tokens, nil
 }
 
 func refreshTokenSrc(authorID int64) (token.ResponseToken, error) {
-	return token.GenTokenAndRefreshToken(authorID, _const.RoleAuthor)
+	tokens, err := token.GenTokenAndRefreshToken(authorID, _const.RoleAuthor)
+	if err != nil {
+		return token.ResponseToken{}, submissionSrcExtractError(err)
+	}
+
+	return tokens, nil
 }
 
 func updateAuthorSrc(author *model.Author) error {
 	err := updateAuthorFn(author)
 	if err != nil {
-		log.Logger.Warn("Update author failed: " + err.Error())
-		return uerr.ExtractError(err)
+		return submissionSrcExtractError(err)
 	}
 
 	return nil
@@ -118,23 +135,21 @@ func updateAuthorSrc(author *model.Author) error {
 
 func submissionWorkSrc(work *model.Work) error {
 	if err := checkSubmissionTimeValid(work.TrackID); err != nil {
-		return err
+		return submissionSrcExtractError(err)
 	}
 
 	track, err := getTrackByIDFn(work.TrackID)
 	if err != nil {
-		log.Logger.Warn("Get track by id failed: " + err.Error())
-		return uerr.ExtractError(err)
+		return submissionSrcExtractError(err)
 	}
 
 	if track.ContestID <= 0 {
-		return errors.New("track is not bound to a contest")
+		return newSubmissionSrcError("track is not bound to a contest")
 	}
 
 	count, err := countWorksByAuthorAndContestFn(work.AuthorID, track.ContestID)
 	if err != nil {
-		log.Logger.Warn("Count submissions failed: " + err.Error())
-		return uerr.ExtractError(err)
+		return submissionSrcExtractError(err)
 	}
 
 	allowed, err := checkHookAllowedAndApplyPatch(
@@ -153,10 +168,10 @@ func submissionWorkSrc(work *model.Work) error {
 		"",
 	)
 	if err != nil {
-		return err
+		return submissionSrcExtractError(err)
 	}
 	if !allowed {
-		return errors.New("submission blocked by script flow")
+		return newSubmissionSrcError("submission blocked by script flow")
 	}
 
 	ensureDefaultWorkStatus(work)
@@ -166,11 +181,11 @@ func submissionWorkSrc(work *model.Work) error {
 
 func updateSubmissionSrc(work *model.Work) error {
 	if err := checkSubmissionTimeValid(work.TrackID); err != nil {
-		return err
+		return submissionSrcExtractError(err)
 	}
 
 	if err := hydrateWorkStatusForUpdate(work); err != nil {
-		return err
+		return submissionSrcExtractError(err)
 	}
 
 	allowed, err := checkHookAllowedAndApplyPatch(
@@ -188,10 +203,10 @@ func updateSubmissionSrc(work *model.Work) error {
 		"update",
 	)
 	if err != nil {
-		return err
+		return submissionSrcExtractError(err)
 	}
 	if !allowed {
-		return errors.New("submission update blocked by script flow")
+		return newSubmissionSrcError("submission update blocked by script flow")
 	}
 
 	if strings.TrimSpace(work.WorkStatus) == "" {
@@ -217,16 +232,15 @@ func deleteSubmissionSrc(work *model.Work) error {
 		"delete",
 	)
 	if err != nil {
-		return err
+		return submissionSrcExtractError(err)
 	}
 	if !allowed {
-		return errors.New("submission delete blocked by script flow")
+		return newSubmissionSrcError("submission delete blocked by script flow")
 	}
 
 	err = deleteWorkFn(work)
 	if err != nil {
-		log.Logger.Warn("Delete submission failed: " + err.Error())
-		return uerr.ExtractError(err)
+		return submissionSrcExtractError(err)
 	}
 
 	if err := removeSubmissionFiles(*work); err != nil {
@@ -239,8 +253,7 @@ func deleteSubmissionSrc(work *model.Work) error {
 func findSubmissionsByAuthorIDSrc(authorID int) ([]model.Work, error) {
 	works, err := findWorksByAuthorIDFn(authorID)
 	if err != nil {
-		log.Logger.Warn("Failed to get works by author id: " + err.Error())
-		return nil, uerr.ExtractError(err)
+		return nil, submissionSrcExtractError(err)
 	}
 	return works, nil
 }
@@ -248,15 +261,15 @@ func findSubmissionsByAuthorIDSrc(authorID int) ([]model.Work, error) {
 func checkSubmissionTimeValid(trackID int) error {
 	start, end, err := getStartAndEndDateFn(trackID)
 	if err != nil {
-		return uerr.ExtractError(err)
+		return submissionSrcExtractError(err)
 	}
 
 	nowTimeUnix := time.Now().Unix()
 	switch {
 	case nowTimeUnix < start:
-		return errors.New("contest has not started yet")
+		return newSubmissionSrcError("contest has not started yet")
 	case nowTimeUnix > end:
-		return errors.New("contest has already ended")
+		return newSubmissionSrcError("contest has already ended")
 	default:
 		return nil
 	}
@@ -267,13 +280,13 @@ func checkSubmissionTimeValid(trackID int) error {
 func checkHookAllowedAndApplyPatch(scope string, eventKey string, trackID int, work *model.Work, payload map[string]any, blockedMessageKey string) (bool, error) {
 	hookResult, err := runTrackHook(scope, eventKey, trackID, payload)
 	if err != nil {
-		return false, err
+		return false, submissionSrcExtractError(err)
 	}
 	if !hookResult.Allowed {
 		if hookResult.Reason != "" {
-			return false, errors.New(hookResult.Reason)
+			return false, newSubmissionSrcError(hookResult.Reason)
 		}
-		return false, errors.New("submission " + blockedMessageKey + " blocked by script flow")
+		return false, newSubmissionSrcError("submission " + blockedMessageKey + " blocked by script flow")
 	}
 	mergeWorkInfos(work, hookResult.Patch)
 	if patchedStatus, ok := extractWorkStatusFromPatch(hookResult.Patch); ok {
@@ -287,13 +300,12 @@ func performWorkOperationWithPermission(work *model.Work, operation func(*model.
 	err := operation(work)
 	if err != nil {
 		log.Logger.Warn(opName + " failed: " + err.Error())
-		return uerr.ExtractError(err)
+		return submissionSrcExtractError(err)
 	}
 
 	err = setUploadFilePermissionFn(work.AuthorID, work.TrackID, work.WorkID)
 	if err != nil {
-		log.Logger.Warn("Set upload file permission failed: " + err.Error())
-		return uerr.ExtractError(err)
+		return submissionSrcExtractError(err)
 	}
 
 	return nil
@@ -305,8 +317,7 @@ func runTrackHook(scope string, eventKey string, trackID int, payload map[string
 		if errors.Is(err, pgsql.ErrFlowNotMounted) {
 			return scriptflow.ChainResult{Allowed: true}, nil
 		}
-		log.Logger.Warn("Resolve script flow failed: " + err.Error())
-		return scriptflow.ChainResult{Allowed: false}, uerr.ExtractError(err)
+		return scriptflow.ChainResult{Allowed: false}, submissionSrcExtractError(err)
 	}
 
 	chain := scriptflow.ChainConfig{
@@ -349,7 +360,7 @@ func runTrackHook(scope string, eventKey string, trackID int, payload map[string
 		if errors.Is(err, scriptflow.ErrExecutionBlocked) {
 			return result, nil
 		}
-		return result, err
+		return result, submissionSrcExtractError(err)
 	}
 
 	return result, nil
@@ -389,8 +400,7 @@ func hydrateWorkStatusForUpdate(work *model.Work) error {
 
 	existing := model.Work{WorkID: work.WorkID}
 	if err := getSubmissionByWorkIDFn(&existing); err != nil {
-		log.Logger.Warn("Get submission by work id failed when hydrating status: " + err.Error())
-		return uerr.ExtractError(err)
+		return submissionSrcExtractError(err)
 	}
 
 	if strings.TrimSpace(existing.WorkStatus) == "" {
@@ -460,7 +470,9 @@ func removeSubmissionFiles(work model.Work) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		wrappedErr := uerr.NewError(err)
+		submissionSrcWarn("Submission src error: " + wrappedErr.Error())
+		return wrappedErr
 	}
 
 	prefix := strconv.Itoa(work.WorkID) + "."
@@ -473,7 +485,9 @@ func removeSubmissionFiles(work model.Work) error {
 			continue
 		}
 		if rmErr := removeFn(filepath.Join(dstDir, name)); rmErr != nil {
-			return rmErr
+			wrappedErr := uerr.NewError(rmErr)
+			submissionSrcWarn("Submission src error: " + wrappedErr.Error())
+			return wrappedErr
 		}
 	}
 

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/lvyonghuan/Ubik-Util/uerr"
 )
 
 var (
@@ -118,14 +120,14 @@ func (e *Executor) executeStep(ctx context.Context, step StepConfig, input Execu
 	if interpreter == "" {
 		stepResult.DurationMs = time.Since(started).Milliseconds()
 		stepResult.Message = "interpreter is required"
-		return stepResult, ExecuteOutput{}, errors.New(stepResult.Message)
+		return stepResult, ExecuteOutput{}, uerr.NewError(errors.New(stepResult.Message))
 	}
 
 	if len(e.allowedInterpreters) > 0 {
 		if _, ok := e.allowedInterpreters[interpreter]; !ok {
 			stepResult.DurationMs = time.Since(started).Milliseconds()
 			stepResult.Message = "interpreter is not allowed: " + interpreter
-			return stepResult, ExecuteOutput{}, errors.New(stepResult.Message)
+			return stepResult, ExecuteOutput{}, uerr.NewError(errors.New(stepResult.Message))
 		}
 	}
 
@@ -161,7 +163,7 @@ func (e *Executor) executeStep(ctx context.Context, step StepConfig, input Execu
 	if err != nil {
 		stepResult.DurationMs = time.Since(started).Milliseconds()
 		stepResult.Message = "marshal step input failed"
-		return stepResult, ExecuteOutput{}, err
+		return stepResult, ExecuteOutput{}, uerr.NewError(err)
 	}
 
 	cmd := exec.CommandContext(stepCtx, interpreter, scriptPath)
@@ -180,7 +182,7 @@ func (e *Executor) executeStep(ctx context.Context, step StepConfig, input Execu
 			msg = runErr.Error()
 		}
 		stepResult.Message = msg
-		return stepResult, ExecuteOutput{}, errors.New(msg)
+		return stepResult, ExecuteOutput{}, uerr.NewError(errors.New(msg))
 	}
 
 	output, err := parseOutput(stdout.String())
@@ -198,26 +200,26 @@ func (e *Executor) executeStep(ctx context.Context, step StepConfig, input Execu
 func (e *Executor) resolveScriptPath(relativePath string) (string, error) {
 	cleanPath := filepath.Clean(relativePath)
 	if cleanPath == "." || cleanPath == string(filepath.Separator) {
-		return "", errors.New("invalid script path")
+		return "", uerr.NewError(errors.New("invalid script path"))
 	}
 
 	baseAbs, err := filepath.Abs(e.baseDir)
 	if err != nil {
-		return "", err
+		return "", uerr.NewError(err)
 	}
 
 	scriptAbs := filepath.Clean(filepath.Join(baseAbs, filepath.FromSlash(cleanPath)))
 	prefix := baseAbs + string(filepath.Separator)
 	if scriptAbs != baseAbs && !strings.HasPrefix(scriptAbs, prefix) {
-		return "", errors.New("script path escapes base directory")
+		return "", uerr.NewError(errors.New("script path escapes base directory"))
 	}
 
 	info, statErr := os.Stat(scriptAbs)
 	if statErr != nil {
-		return "", statErr
+		return "", uerr.NewError(statErr)
 	}
 	if info.IsDir() {
-		return "", errors.New("script path points to a directory")
+		return "", uerr.NewError(errors.New("script path points to a directory"))
 	}
 
 	return scriptAbs, nil
@@ -243,7 +245,7 @@ func parseOutput(raw string) (ExecuteOutput, error) {
 		if len(preview) > 256 {
 			preview = preview[:256]
 		}
-		return ExecuteOutput{}, fmt.Errorf("invalid script output json: %w; stdout=%s", err, preview)
+		return ExecuteOutput{}, uerr.NewError(fmt.Errorf("invalid script output json: %w; stdout=%s", err, preview))
 	}
 
 	allow := true

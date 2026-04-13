@@ -5,6 +5,7 @@ import (
 	"main/database/pgsql"
 	"main/model"
 	_const "main/util/const"
+	"main/util/log"
 	"main/util/password"
 	"main/util/token"
 	"os"
@@ -45,6 +46,24 @@ var (
 	errWorkFileNotFound    = errors.New("work file not found")
 )
 
+func judgeSrcWarn(message string) {
+	if log.Logger != nil {
+		log.Logger.Warn(message)
+	}
+}
+
+func newJudgeSrcError(message string) error {
+	err := errors.New(message)
+	judgeSrcWarn("Judge src error: " + err.Error())
+	return err
+}
+
+func judgeSrcExtractError(err error) error {
+	parsedErr := uerr.ExtractError(err)
+	judgeSrcWarn("Judge src error: " + parsedErr.Error())
+	return parsedErr
+}
+
 type ReviewSubmitInput struct {
 	WorkID          int            `json:"workID"`
 	EventID         int            `json:"eventID"`
@@ -57,7 +76,7 @@ func judgeLoginSrc(judgeID int, judgeName string, plainPassword string) (token.R
 	judgeName = strings.TrimSpace(judgeName)
 	plainPassword = strings.TrimSpace(plainPassword)
 	if plainPassword == "" {
-		return token.ResponseToken{}, errors.New("password is required")
+		return token.ResponseToken{}, newJudgeSrcError("password is required")
 	}
 
 	var (
@@ -70,23 +89,24 @@ func judgeLoginSrc(judgeID int, judgeName string, plainPassword string) (token.R
 	} else if judgeName != "" {
 		judge, err = getJudgeByNameFn(judgeName)
 	} else {
-		return token.ResponseToken{}, errors.New("judgeID or judgeName is required")
+		return token.ResponseToken{}, newJudgeSrcError("judgeID or judgeName is required")
 	}
 	if err != nil {
-		parsedErr := uerr.ExtractError(err)
+		parsedErr := judgeSrcExtractError(err)
 		if errors.Is(parsedErr, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(parsedErr.Error()), "record not found") {
+			log.Logger.Warn("Judge src error: " + errJudgeNotFound.Error())
 			return token.ResponseToken{}, errJudgeNotFound
 		}
 		return token.ResponseToken{}, parsedErr
 	}
 
 	if plainPassword != judge.Password && !password.CheckPasswordHash(plainPassword, judge.Password) {
-		return token.ResponseToken{}, errors.New("login error")
+		return token.ResponseToken{}, newJudgeSrcError("login error")
 	}
 
 	tokens, tokenErr := genTokenAndRefreshTokenFn(int64(judge.JudgeID), _const.RoleJudge)
 	if tokenErr != nil {
-		return token.ResponseToken{}, uerr.ExtractError(tokenErr)
+		return token.ResponseToken{}, judgeSrcExtractError(tokenErr)
 	}
 
 	return tokens, nil
@@ -95,7 +115,7 @@ func judgeLoginSrc(judgeID int, judgeName string, plainPassword string) (token.R
 func listJudgeEventsSrc(judgeID int, offset int, limit int) ([]model.ReviewEvent, error) {
 	events, err := listReviewEventsByJudgeIDFn(judgeID, offset, limit)
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, judgeSrcExtractError(err)
 	}
 
 	return events, nil
@@ -103,13 +123,14 @@ func listJudgeEventsSrc(judgeID int, offset int, limit int) ([]model.ReviewEvent
 
 func getJudgeEventByIDSrc(judgeID int, eventID int) (model.ReviewEvent, error) {
 	if err := ensureJudgeAssignedToEvent(judgeID, eventID); err != nil {
-		return model.ReviewEvent{}, err
+		return model.ReviewEvent{}, judgeSrcExtractError(err)
 	}
 
 	event, err := getReviewEventByIDFn(eventID)
 	if err != nil {
-		parsedErr := uerr.ExtractError(err)
+		parsedErr := judgeSrcExtractError(err)
 		if errors.Is(parsedErr, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(parsedErr.Error()), "record not found") {
+			log.Logger.Warn("Judge src error: " + errReviewEventNotFound.Error())
 			return model.ReviewEvent{}, errReviewEventNotFound
 		}
 		return model.ReviewEvent{}, parsedErr
@@ -123,12 +144,12 @@ func getJudgeEventByIDSrc(judgeID int, eventID int) (model.ReviewEvent, error) {
 
 func listJudgeEventWorksSrc(judgeID int, eventID int, offset int, limit int) ([]model.Work, error) {
 	if err := ensureJudgeAssignedToEvent(judgeID, eventID); err != nil {
-		return nil, err
+		return nil, judgeSrcExtractError(err)
 	}
 
 	works, err := getReviewWorksByEventFn(eventID, judgeID, offset, limit)
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, judgeSrcExtractError(err)
 	}
 
 	return works, nil
@@ -136,31 +157,31 @@ func listJudgeEventWorksSrc(judgeID int, eventID int, offset int, limit int) ([]
 
 func submitJudgeReviewSrc(judgeID int, input ReviewSubmitInput) (model.Review, error) {
 	if input.WorkID <= 0 || input.EventID <= 0 {
-		return model.Review{}, errors.New("invalid workID or eventID")
+		return model.Review{}, newJudgeSrcError("invalid workID or eventID")
 	}
 
 	event, err := getJudgeEventByIDSrc(judgeID, input.EventID)
 	if err != nil {
-		return model.Review{}, err
+		return model.Review{}, judgeSrcExtractError(err)
 	}
 
 	work, err := getWorkByIDFn(input.WorkID)
 	if err != nil {
-		return model.Review{}, uerr.ExtractError(err)
+		return model.Review{}, judgeSrcExtractError(err)
 	}
 	if work.TrackID != event.TrackID {
-		return model.Review{}, errors.New("work does not belong to review event track")
+		return model.Review{}, newJudgeSrcError("work does not belong to review event track")
 	}
 	if status := strings.TrimSpace(event.WorkStatus); status != "" && work.WorkStatus != status {
-		return model.Review{}, errors.New("work status is not in review scope")
+		return model.Review{}, newJudgeSrcError("work status is not in review scope")
 	}
 
 	alreadyReviewed, reviewedErr := hasReviewedWorkInOtherEventsFn(judgeID, input.WorkID, input.EventID)
 	if reviewedErr != nil {
-		return model.Review{}, uerr.ExtractError(reviewedErr)
+		return model.Review{}, judgeSrcExtractError(reviewedErr)
 	}
 	if alreadyReviewed {
-		return model.Review{}, errors.New("work already reviewed by judge in another event")
+		return model.Review{}, newJudgeSrcError("work already reviewed by judge in another event")
 	}
 
 	judgeComment := strings.TrimSpace(input.JudgeComment)
@@ -174,7 +195,7 @@ func submitJudgeReviewSrc(judgeID int, input ReviewSubmitInput) (model.Review, e
 
 	review, err := upsertReviewFn(input.WorkID, input.EventID, judgeID, workReviews)
 	if err != nil {
-		return model.Review{}, uerr.ExtractError(err)
+		return model.Review{}, judgeSrcExtractError(err)
 	}
 
 	return review, nil
@@ -182,12 +203,12 @@ func submitJudgeReviewSrc(judgeID int, input ReviewSubmitInput) (model.Review, e
 
 func listJudgeEventReviewsSrc(judgeID int, eventID int) ([]model.Review, error) {
 	if err := ensureJudgeAssignedToEvent(judgeID, eventID); err != nil {
-		return nil, err
+		return nil, judgeSrcExtractError(err)
 	}
 
 	reviews, err := listReviewsByJudgeAndEventFn(judgeID, eventID)
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, judgeSrcExtractError(err)
 	}
 
 	return reviews, nil
@@ -195,19 +216,20 @@ func listJudgeEventReviewsSrc(judgeID int, eventID int) ([]model.Review, error) 
 
 func updateJudgeReviewSrc(judgeID int, reviewID int, judgeScore float64, judgeComment string, dimensionScores map[string]any) (model.Review, error) {
 	if reviewID <= 0 {
-		return model.Review{}, errors.New("invalid reviewID")
+		return model.Review{}, newJudgeSrcError("invalid reviewID")
 	}
 
 	review, err := getReviewByIDFn(reviewID)
 	if err != nil {
-		parsedErr := uerr.ExtractError(err)
+		parsedErr := judgeSrcExtractError(err)
 		if errors.Is(parsedErr, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(parsedErr.Error()), "record not found") {
+			log.Logger.Warn("Judge src error: " + errReviewNotFound.Error())
 			return model.Review{}, errReviewNotFound
 		}
 		return model.Review{}, parsedErr
 	}
 	if review.JudgeID != judgeID {
-		return model.Review{}, errors.New("forbidden: can only update own review")
+		return model.Review{}, newJudgeSrcError("forbidden: can only update own review")
 	}
 
 	workReviews := map[string]any{
@@ -219,7 +241,7 @@ func updateJudgeReviewSrc(judgeID int, reviewID int, judgeScore float64, judgeCo
 	}
 
 	if err = updateReviewByIDFn(reviewID, judgeID, workReviews); err != nil {
-		return model.Review{}, uerr.ExtractError(err)
+		return model.Review{}, judgeSrcExtractError(err)
 	}
 
 	review.WorkReviews = workReviews
@@ -228,20 +250,20 @@ func updateJudgeReviewSrc(judgeID int, reviewID int, judgeScore float64, judgeCo
 
 func getJudgeReviewWorkFilePathSrc(judgeID int, eventID int, workID int) (string, error) {
 	if err := ensureJudgeAssignedToEvent(judgeID, eventID); err != nil {
-		return "", err
+		return "", judgeSrcExtractError(err)
 	}
 
 	event, err := getReviewEventByIDFn(eventID)
 	if err != nil {
-		return "", uerr.ExtractError(err)
+		return "", judgeSrcExtractError(err)
 	}
 
 	work, err := getWorkByIDFn(workID)
 	if err != nil {
-		return "", uerr.ExtractError(err)
+		return "", judgeSrcExtractError(err)
 	}
 	if work.TrackID != event.TrackID {
-		return "", errors.New("work does not belong to review event track")
+		return "", newJudgeSrcError("work does not belong to review event track")
 	}
 
 	return resolveWorkFilePath(work)
@@ -249,14 +271,15 @@ func getJudgeReviewWorkFilePathSrc(judgeID int, eventID int, workID int) (string
 
 func ensureJudgeAssignedToEvent(judgeID int, eventID int) error {
 	if judgeID <= 0 || eventID <= 0 {
-		return errors.New("invalid judgeID or eventID")
+		return newJudgeSrcError("invalid judgeID or eventID")
 	}
 
 	assigned, err := isJudgeAssignedToEventFn(eventID, judgeID)
 	if err != nil {
-		return uerr.ExtractError(err)
+		return judgeSrcExtractError(err)
 	}
 	if !assigned {
+		log.Logger.Warn("Judge src error: " + errEventAccessDenied.Error())
 		return errEventAccessDenied
 	}
 
@@ -268,9 +291,12 @@ func resolveWorkFilePath(work model.Work) (string, error) {
 	entries, err := readDirFn(dstDir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			log.Logger.Warn("Judge src error: " + errWorkFileNotFound.Error())
 			return "", errWorkFileNotFound
 		}
-		return "", uerr.ExtractError(err)
+		wrappedErr := uerr.NewError(err)
+		judgeSrcWarn("Judge src error: " + wrappedErr.Error())
+		return "", wrappedErr
 	}
 
 	prefix := strconv.Itoa(work.WorkID) + "."
@@ -316,6 +342,7 @@ func resolveWorkFilePath(work model.Work) (string, error) {
 	}
 
 	if selectedName == "" {
+		log.Logger.Warn("Judge src error: " + errWorkFileNotFound.Error())
 		return "", errWorkFileNotFound
 	}
 

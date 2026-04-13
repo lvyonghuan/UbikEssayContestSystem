@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"main/admin"
 	"main/conf"
 	"main/database/pgsql"
@@ -39,7 +39,7 @@ func main() {
 	//初始化redis
 	err = redis.InitRedis(config.Redis)
 	if err != nil {
-		log.Logger.Fatal(errors.New("Redis连接失败: " + err.Error()))
+		log.Logger.Fatal(uerr.NewError(fmt.Errorf("Redis连接失败: %w", err)))
 		os.Exit(1)
 	}
 	log.Logger.Debug("Redis连接成功")
@@ -47,7 +47,7 @@ func main() {
 	//初始化JWT系统
 	err = token.InitJWT(config.System.Token)
 	if err != nil {
-		log.Logger.Fatal(errors.New("JWT系统初始化失败: " + err.Error()))
+		log.Logger.Fatal(uerr.NewError(fmt.Errorf("JWT系统初始化失败: %w", err)))
 		os.Exit(1)
 	}
 	log.Logger.Debug("JWT系统初始化成功")
@@ -56,7 +56,7 @@ func main() {
 		log.Logger.System("检查到系统未完成初始化，开始初始化系统")
 		err := initSystem(config.System)
 		if err != nil {
-			log.Logger.Fatal(errors.New("系统初始化失败: " + err.Error()))
+			log.Logger.Fatal(uerr.NewError(fmt.Errorf("系统初始化失败: %w", err)))
 			os.Exit(1)
 		}
 		log.Logger.System("系统初始化成功")
@@ -79,7 +79,7 @@ func main() {
 func checkSystemInit() bool {
 	isInit, err := pgsql.CheckIfSystemInit()
 	if err != nil {
-		log.Logger.Fatal(errors.New("检查系统初始化状态失败: " + err.Error()))
+		log.Logger.Fatal(uerr.NewError(fmt.Errorf("检查系统初始化状态失败: %w", err)))
 		os.Exit(1)
 	}
 
@@ -112,7 +112,7 @@ func initEmailSystem(emailConf conf.EmailConfig) error {
 	//配置客户端
 	c, err := mail.NewClient(emailConf.SMTPHost, mail.WithPort(emailConf.SMTPPort), mail.WithSMTPAuth(mail.SMTPAuthPlain), mail.WithUsername(emailConf.EmailAddress), mail.WithPassword(emailConf.EmailAPPPassword))
 	if err != nil {
-		return uerr.NewError(errors.New("创建邮件客户端失败: " + err.Error()))
+		return uerr.NewError(fmt.Errorf("创建邮件客户端失败: %w", err))
 	}
 
 	//测试连接
@@ -129,7 +129,7 @@ func initEmailSystem(emailConf conf.EmailConfig) error {
 	// 向数据库写入邮件配置
 	err = pgsql.WriteSystemEmailConfig(emailConf)
 	if err != nil {
-		return uerr.NewError(errors.New("写入邮件配置到数据库失败: " + err.Error()))
+		return uerr.NewError(fmt.Errorf("写入邮件配置到数据库失败: %w", err))
 	}
 
 	return nil
@@ -138,7 +138,7 @@ func initEmailSystem(emailConf conf.EmailConfig) error {
 func initSuperAdminAccount() error {
 	admin, err := pgsql.FindAdminByUsername("superadmin")
 	if err != nil {
-		return uerr.NewError(errors.New("查询默认超级管理员账号失败: " + err.Error()))
+		return uerr.NewError(fmt.Errorf("查询默认超级管理员账号失败: %w", err))
 	}
 
 	//生成随机密码
@@ -146,12 +146,12 @@ func initSuperAdminAccount() error {
 	//hash密码
 	hashedPassword, err := password.HashPassword(randNewPassword)
 	if err != nil {
-		return uerr.NewError(errors.New("生成超级管理员账号密码失败: " + err.Error()))
+		return uerr.NewError(fmt.Errorf("生成超级管理员账号密码失败: %w", err))
 	}
 	//更新数据库中的超级管理员密码
 	err = pgsql.ChangeAdminPassword(admin.AdminID, hashedPassword)
 	if err != nil {
-		return uerr.NewError(errors.New("更新超级管理员账号密码失败: " + err.Error()))
+		return uerr.NewError(fmt.Errorf("更新超级管理员账号密码失败: %w", err))
 	}
 
 	//打印新密码

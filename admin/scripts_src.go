@@ -60,12 +60,30 @@ var (
 	}
 )
 
+func scriptSrcWarn(message string) {
+	if log.Logger != nil {
+		log.Logger.Warn(message)
+	}
+}
+
+func newScriptSrcError(message string) error {
+	err := errors.New(message)
+	scriptSrcWarn("Script src error: " + err.Error())
+	return err
+}
+
+func scriptSrcExtractError(err error) error {
+	parsedErr := uerr.ExtractError(err)
+	scriptSrcWarn("Script src error: " + parsedErr.Error())
+	return parsedErr
+}
+
 func createScriptDefinitionSrc(adminID int, def *model.ScriptDefinition) error {
 	def.ScriptKey = strings.TrimSpace(def.ScriptKey)
 	def.ScriptName = strings.TrimSpace(def.ScriptName)
 	def.Interpreter = strings.TrimSpace(def.Interpreter)
 	if err := validateScriptDefinition(def); err != nil {
-		return err
+		return scriptSrcExtractError(err)
 	}
 	if def.Meta == nil {
 		def.Meta = map[string]any{}
@@ -76,8 +94,7 @@ func createScriptDefinitionSrc(adminID int, def *model.ScriptDefinition) error {
 
 	err := createScriptDefinitionFn(def)
 	if err != nil {
-		log.Logger.Warn("Create script definition error: " + err.Error())
-		return uerr.ExtractError(err)
+		return scriptSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.Scripts, _const.Create,
@@ -90,16 +107,15 @@ func updateScriptDefinitionSrc(adminID int, scriptID int, updated *model.ScriptD
 	updated.ScriptName = strings.TrimSpace(updated.ScriptName)
 	updated.Interpreter = strings.TrimSpace(updated.Interpreter)
 	if updated.ScriptName == "" {
-		return errors.New("script name is required")
+		return newScriptSrcError("script name is required")
 	}
 	if _, ok := allowedInterpreters[updated.Interpreter]; !ok {
-		return errors.New("unsupported interpreter")
+		return newScriptSrcError("unsupported interpreter")
 	}
 
 	err := updateScriptDefinitionFn(scriptID, updated)
 	if err != nil {
-		log.Logger.Warn("Update script definition error: " + err.Error())
-		return uerr.ExtractError(err)
+		return scriptSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.Scripts, _const.Update,
@@ -111,7 +127,7 @@ func updateScriptDefinitionSrc(adminID int, scriptID int, updated *model.ScriptD
 func getScriptDefinitionByIDSrc(scriptID int) (model.ScriptDefinition, error) {
 	def, err := getScriptDefinitionByIDFn(scriptID)
 	if err != nil {
-		return model.ScriptDefinition{}, uerr.ExtractError(err)
+		return model.ScriptDefinition{}, scriptSrcExtractError(err)
 	}
 	return def, nil
 }
@@ -119,7 +135,7 @@ func getScriptDefinitionByIDSrc(scriptID int) (model.ScriptDefinition, error) {
 func listScriptDefinitionsSrc() ([]model.ScriptDefinition, error) {
 	defs, err := listScriptDefinitionsFn()
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, scriptSrcExtractError(err)
 	}
 	return defs, nil
 }
@@ -127,7 +143,7 @@ func listScriptDefinitionsSrc() ([]model.ScriptDefinition, error) {
 func setScriptDefinitionEnabledSrc(adminID int, scriptID int, enabled bool) error {
 	err := setScriptDefinitionEnabledFn(scriptID, enabled)
 	if err != nil {
-		return uerr.ExtractError(err)
+		return scriptSrcExtractError(err)
 	}
 
 	action := _const.Update
@@ -140,34 +156,37 @@ func setScriptDefinitionEnabledSrc(adminID int, scriptID int, enabled bool) erro
 func uploadScriptVersionSrc(adminID int, scriptID int, fileHeader *multipart.FileHeader) (model.ScriptVersion, error) {
 	def, err := getScriptDefinitionByIDFn(scriptID)
 	if err != nil {
-		return model.ScriptVersion{}, uerr.ExtractError(err)
+		return model.ScriptVersion{}, scriptSrcExtractError(err)
 	}
 
 	nextVersion, err := getNextScriptVersionNumberFn(scriptID)
 	if err != nil {
-		return model.ScriptVersion{}, uerr.ExtractError(err)
+		return model.ScriptVersion{}, scriptSrcExtractError(err)
 	}
 
 	safeName := filepath.Base(strings.TrimSpace(fileHeader.Filename))
 	if safeName == "" || safeName == "." {
-		return model.ScriptVersion{}, errors.New("invalid script file name")
+		return model.ScriptVersion{}, newScriptSrcError("invalid script file name")
 	}
 
 	versionDir := filepath.Join("scripts", def.ScriptKey, "v"+strconv.Itoa(nextVersion))
 	if err = mkdirAllFn(versionDir, os.ModePerm); err != nil {
-		return model.ScriptVersion{}, err
+		wrappedErr := uerr.NewError(err)
+		return model.ScriptVersion{}, scriptSrcExtractError(wrappedErr)
 	}
 
 	dstPath := filepath.Join(versionDir, safeName)
 	srcFile, err := openUploadFileFn(fileHeader)
 	if err != nil {
-		return model.ScriptVersion{}, err
+		wrappedErr := uerr.NewError(err)
+		return model.ScriptVersion{}, scriptSrcExtractError(wrappedErr)
 	}
 	defer srcFile.Close()
 
 	dstFile, err := createFileFn(dstPath)
 	if err != nil {
-		return model.ScriptVersion{}, err
+		wrappedErr := uerr.NewError(err)
+		return model.ScriptVersion{}, scriptSrcExtractError(wrappedErr)
 	}
 
 	hasher := sha256.New()
@@ -175,11 +194,13 @@ func uploadScriptVersionSrc(adminID int, scriptID int, fileHeader *multipart.Fil
 	closeErr := dstFile.Close()
 	if err != nil {
 		_ = removeFn(dstPath)
-		return model.ScriptVersion{}, err
+		wrappedErr := uerr.NewError(err)
+		return model.ScriptVersion{}, scriptSrcExtractError(wrappedErr)
 	}
 	if closeErr != nil {
 		_ = removeFn(dstPath)
-		return model.ScriptVersion{}, closeErr
+		wrappedErr := uerr.NewError(closeErr)
+		return model.ScriptVersion{}, scriptSrcExtractError(wrappedErr)
 	}
 
 	version := model.ScriptVersion{
@@ -195,7 +216,7 @@ func uploadScriptVersionSrc(adminID int, scriptID int, fileHeader *multipart.Fil
 	err = createScriptVersionFn(&version)
 	if err != nil {
 		_ = removeFn(dstPath)
-		return model.ScriptVersion{}, uerr.ExtractError(err)
+		return model.ScriptVersion{}, scriptSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.Scripts, _const.Update,
@@ -207,7 +228,7 @@ func uploadScriptVersionSrc(adminID int, scriptID int, fileHeader *multipart.Fil
 func listScriptVersionsSrc(scriptID int) ([]model.ScriptVersion, error) {
 	versions, err := listScriptVersionsFn(scriptID)
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, scriptSrcExtractError(err)
 	}
 	return versions, nil
 }
@@ -215,7 +236,7 @@ func listScriptVersionsSrc(scriptID int) ([]model.ScriptVersion, error) {
 func activateScriptVersionSrc(adminID int, scriptID int, versionID int) error {
 	err := activateScriptVersionFn(scriptID, versionID)
 	if err != nil {
-		return uerr.ExtractError(err)
+		return scriptSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.Scripts, _const.Update,
@@ -228,10 +249,10 @@ func createScriptFlowSrc(adminID int, flow *model.ScriptFlow) error {
 	flow.FlowKey = strings.TrimSpace(flow.FlowKey)
 	flow.FlowName = strings.TrimSpace(flow.FlowName)
 	if flow.FlowKey == "" || flow.FlowName == "" {
-		return errors.New("flow key and flow name are required")
+		return newScriptSrcError("flow key and flow name are required")
 	}
 	if !scriptKeyRegexp.MatchString(flow.FlowKey) {
-		return errors.New("flow key only supports letters, numbers, underscore and hyphen")
+		return newScriptSrcError("flow key only supports letters, numbers, underscore and hyphen")
 	}
 	if flow.Meta == nil {
 		flow.Meta = map[string]any{}
@@ -242,7 +263,7 @@ func createScriptFlowSrc(adminID int, flow *model.ScriptFlow) error {
 
 	err := createScriptFlowFn(flow)
 	if err != nil {
-		return uerr.ExtractError(err)
+		return scriptSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.ScriptFlows, _const.Create,
@@ -254,12 +275,12 @@ func createScriptFlowSrc(adminID int, flow *model.ScriptFlow) error {
 func updateScriptFlowSrc(adminID int, flowID int, updated *model.ScriptFlow) error {
 	updated.FlowName = strings.TrimSpace(updated.FlowName)
 	if updated.FlowName == "" {
-		return errors.New("flow name is required")
+		return newScriptSrcError("flow name is required")
 	}
 
 	err := updateScriptFlowFn(flowID, updated)
 	if err != nil {
-		return uerr.ExtractError(err)
+		return scriptSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.ScriptFlows, _const.Update,
@@ -271,7 +292,7 @@ func updateScriptFlowSrc(adminID int, flowID int, updated *model.ScriptFlow) err
 func getScriptFlowByIDSrc(flowID int) (model.ScriptFlow, error) {
 	flow, err := getScriptFlowByIDFn(flowID)
 	if err != nil {
-		return model.ScriptFlow{}, uerr.ExtractError(err)
+		return model.ScriptFlow{}, scriptSrcExtractError(err)
 	}
 	return flow, nil
 }
@@ -279,7 +300,7 @@ func getScriptFlowByIDSrc(flowID int) (model.ScriptFlow, error) {
 func listScriptFlowsSrc() ([]model.ScriptFlow, error) {
 	flows, err := listScriptFlowsFn()
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, scriptSrcExtractError(err)
 	}
 	return flows, nil
 }
@@ -287,7 +308,7 @@ func listScriptFlowsSrc() ([]model.ScriptFlow, error) {
 func setScriptFlowEnabledSrc(adminID int, flowID int, enabled bool) error {
 	err := setScriptFlowEnabledFn(flowID, enabled)
 	if err != nil {
-		return uerr.ExtractError(err)
+		return scriptSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.ScriptFlows, _const.Update,
@@ -299,10 +320,10 @@ func setScriptFlowEnabledSrc(adminID int, flowID int, enabled bool) error {
 func replaceFlowStepsSrc(adminID int, flowID int, steps []model.FlowStep) error {
 	for i := range steps {
 		if strings.TrimSpace(steps[i].StepName) == "" {
-			return errors.New("step name is required")
+			return newScriptSrcError("step name is required")
 		}
 		if steps[i].ScriptID <= 0 {
-			return errors.New("script id is required")
+			return newScriptSrcError("script id is required")
 		}
 		if steps[i].StepOrder == 0 {
 			steps[i].StepOrder = i + 1
@@ -314,22 +335,22 @@ func replaceFlowStepsSrc(adminID int, flowID int, steps []model.FlowStep) error 
 			steps[i].TimeoutMs = 5000
 		}
 		if _, err := getScriptDefinitionByIDFn(steps[i].ScriptID); err != nil {
-			return uerr.ExtractError(err)
+			return scriptSrcExtractError(err)
 		}
 		if steps[i].ScriptVersionID > 0 {
 			version, err := getScriptVersionByIDFn(steps[i].ScriptVersionID)
 			if err != nil {
-				return uerr.ExtractError(err)
+				return scriptSrcExtractError(err)
 			}
 			if version.ScriptID != steps[i].ScriptID {
-				return errors.New("script version does not belong to script")
+				return newScriptSrcError("script version does not belong to script")
 			}
 		}
 	}
 
 	err := replaceFlowStepsFn(flowID, steps)
 	if err != nil {
-		return uerr.ExtractError(err)
+		return scriptSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.ScriptFlows, _const.Update,
@@ -341,7 +362,7 @@ func replaceFlowStepsSrc(adminID int, flowID int, steps []model.FlowStep) error 
 func listFlowStepsSrc(flowID int) ([]model.FlowStep, error) {
 	steps, err := listFlowStepsFn(flowID)
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, scriptSrcExtractError(err)
 	}
 	return steps, nil
 }
@@ -351,22 +372,22 @@ func createFlowMountSrc(adminID int, mount *model.FlowMount) error {
 	mount.EventKey = strings.TrimSpace(mount.EventKey)
 	mount.TargetType = strings.TrimSpace(mount.TargetType)
 	if mount.FlowID <= 0 || mount.Scope == "" || mount.EventKey == "" || mount.TargetType == "" {
-		return errors.New("flow_id/scope/event_key/target_type are required")
+		return newScriptSrcError("flow_id/scope/event_key/target_type are required")
 	}
 	if mount.TargetID < 0 {
-		return errors.New("target_id must be >= 0")
+		return newScriptSrcError("target_id must be >= 0")
 	}
 	if !mount.IsEnabled {
 		mount.IsEnabled = true
 	}
 
 	if _, err := getScriptFlowByIDFn(mount.FlowID); err != nil {
-		return uerr.ExtractError(err)
+		return scriptSrcExtractError(err)
 	}
 
 	err := createFlowMountFn(mount)
 	if err != nil {
-		return uerr.ExtractError(err)
+		return scriptSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.ScriptFlows, _const.Create,
@@ -378,7 +399,7 @@ func createFlowMountSrc(adminID int, mount *model.FlowMount) error {
 func deleteFlowMountSrc(adminID int, mountID int) error {
 	err := deleteFlowMountFn(mountID)
 	if err != nil {
-		return uerr.ExtractError(err)
+		return scriptSrcExtractError(err)
 	}
 
 	createActionLogFn(adminID, _const.ScriptFlows, _const.Delete,
@@ -390,20 +411,20 @@ func deleteFlowMountSrc(adminID int, mountID int) error {
 func listFlowMountsByFlowSrc(flowID int) ([]model.FlowMount, error) {
 	mounts, err := listFlowMountsByFlowFn(flowID)
 	if err != nil {
-		return nil, uerr.ExtractError(err)
+		return nil, scriptSrcExtractError(err)
 	}
 	return mounts, nil
 }
 
 func validateScriptDefinition(def *model.ScriptDefinition) error {
 	if def.ScriptKey == "" || def.ScriptName == "" {
-		return errors.New("script key and script name are required")
+		return newScriptSrcError("script key and script name are required")
 	}
 	if !scriptKeyRegexp.MatchString(def.ScriptKey) {
-		return errors.New("script key only supports letters, numbers, underscore and hyphen")
+		return newScriptSrcError("script key only supports letters, numbers, underscore and hyphen")
 	}
 	if _, ok := allowedInterpreters[def.Interpreter]; !ok {
-		return errors.New("unsupported interpreter")
+		return newScriptSrcError("unsupported interpreter")
 	}
 	return nil
 }

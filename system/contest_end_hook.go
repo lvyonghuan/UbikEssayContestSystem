@@ -13,9 +13,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lvyonghuan/Ubik-Util/uerr"
 )
 
 var (
@@ -31,8 +34,16 @@ var (
 	resolveSubmissionFileForEndFn = resolveSubmissionFileForEnd
 	convertDocxToPDFForEndFn      = convertDocxToPDF
 
-	readDirForEndFn  = os.ReadDir
-	mkdirAllForEndFn = os.MkdirAll
+	readDirForEndFn    = os.ReadDir
+	mkdirAllForEndFn   = os.MkdirAll
+	renameFileForEndFn = os.Rename
+	openFileForEndFn   = os.Open
+	createFileForEndFn = os.Create
+	copyFileForEndFn   = io.Copy
+	removeFileForEndFn = os.Remove
+	sleepForEndFn      = time.Sleep
+
+	cleanupRetryBackoffsForEnd = []time.Duration{100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond}
 
 	executeScriptChainForEndFn = func(chain scriptflow.ChainConfig, input scriptflow.ExecuteInput) (scriptflow.ChainResult, error) {
 		executor := scriptflow.NewExecutor(".", 5*time.Second, []string{"python3", "python", "bash", "sh", "node"})
@@ -93,7 +104,7 @@ func runContestEndHookForTrack(contestID int, trackID int) error {
 				if reason == "" {
 					reason = "contest_end blocked by script flow"
 				}
-				return errors.New(reason)
+				return uerr.NewError(errors.New(reason))
 			}
 			return err
 		}
@@ -102,7 +113,7 @@ func runContestEndHookForTrack(contestID int, trackID int) error {
 			if reason == "" {
 				reason = "contest_end blocked by script flow"
 			}
-			return errors.New(reason)
+			return uerr.NewError(errors.New(reason))
 		}
 	}
 
@@ -290,7 +301,7 @@ func resolveSubmissionFileForEnd(work model.Work) (string, error) {
 		if os.IsNotExist(err) {
 			return "", os.ErrNotExist
 		}
-		return "", err
+		return "", uerr.NewError(err)
 	}
 
 	prefix := strconv.Itoa(work.WorkID) + "."
@@ -342,22 +353,62 @@ func resolveSubmissionFileForEnd(work model.Work) (string, error) {
 	return filepath.Join(dstDir, selectedName), nil
 }
 
+func buildOfficeConverterCandidates() []string {
+	seen := make(map[string]struct{})
+	binaries := make([]string, 0, 5)
+
+	add := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			return
+		}
+		if _, exists := seen[candidate]; exists {
+			return
+		}
+		seen[candidate] = struct{}{}
+		binaries = append(binaries, candidate)
+	}
+
+	add(os.Getenv("UBIK_LIBREOFFICE_BIN"))
+	add("soffice")
+	add("libreoffice")
+
+	if runtime.GOOS == "windows" {
+		if programFiles := strings.TrimSpace(os.Getenv("ProgramFiles")); programFiles != "" {
+			add(filepath.Join(programFiles, "LibreOffice", "program", "soffice.exe"))
+		}
+		if programFilesX86 := strings.TrimSpace(os.Getenv("ProgramFiles(x86)")); programFilesX86 != "" {
+			add(filepath.Join(programFilesX86, "LibreOffice", "program", "soffice.exe"))
+		}
+	}
+
+	return binaries
+}
+
+func trimCommandOutput(output []byte) string {
+	text := strings.TrimSpace(string(output))
+	if len(text) <= 500 {
+		return text
+	}
+	return text[:500] + "..."
+}
+
 func convertDocxToPDF(ctx context.Context, srcDocxPath string, dstPDFPath string) error {
 	if strings.ToLower(filepath.Ext(srcDocxPath)) != ".docx" {
-		return errors.New("source file must be .docx")
+		return uerr.NewError(errors.New("source file must be .docx"))
 	}
 
 	if strings.ToLower(filepath.Ext(dstPDFPath)) != ".pdf" {
-		return errors.New("destination file must be .pdf")
+		return uerr.NewError(errors.New("destination file must be .pdf"))
 	}
 
 	if err := mkdirAllForEndFn(filepath.Dir(dstPDFPath), os.ModePerm); err != nil {
-		return err
+		return uerr.NewError(err)
 	}
 
 	workDir, err := os.MkdirTemp(os.TempDir(), "docx-to-pdf-*")
 	if err != nil {
-		return err
+		return uerr.NewError(err)
 	}
 	defer os.RemoveAll(workDir)
 
@@ -368,12 +419,20 @@ func convertDocxToPDF(ctx context.Context, srcDocxPath string, dstPDFPath string
 	stepCtx, cancel := context.WithTimeout(stepCtx, 60*time.Second)
 	defer cancel()
 
-	binaries := []string{"soffice", "libreoffice"}
+	binaries := buildOfficeConverterCandidates()
 	var convertErr error
+	attemptErrors := make([]string, 0, len(binaries))
 	for _, binary := range binaries {
+		resolvedBinary := binary
+		if !strings.ContainsAny(binary, `\\/`) {
+			if lookedUpBinary, lookErr := exec.LookPath(binary); lookErr == nil {
+				resolvedBinary = lookedUpBinary
+			}
+		}
+
 		cmd := exec.CommandContext(
 			stepCtx,
-			binary,
+			resolvedBinary,
 			"--headless",
 			"--convert-to",
 			"pdf",
@@ -388,43 +447,92 @@ func convertDocxToPDF(ctx context.Context, srcDocxPath string, dstPDFPath string
 			break
 		}
 
-		convertErr = fmt.Errorf("%s convert failed: %w, output: %s", binary, err, strings.TrimSpace(string(output)))
+		trimmedOutput := trimCommandOutput(output)
+		convertErr = fmt.Errorf("%s convert failed: %w, output: %s", resolvedBinary, err, trimmedOutput)
+		attemptErrors = append(attemptErrors, convertErr.Error())
 	}
 	if convertErr != nil {
-		return convertErr
+		pathHasLibreOffice := strings.Contains(strings.ToLower(os.Getenv("PATH")), "libreoffice")
+		if len(attemptErrors) == 0 {
+			attemptErrors = append(attemptErrors, "no converter candidate available")
+		}
+		return uerr.NewError(fmt.Errorf("libreoffice convert failed after %d attempts (PATH has libreoffice=%t): %s", len(attemptErrors), pathHasLibreOffice, strings.Join(attemptErrors, " | ")))
 	}
 
 	generated := filepath.Join(workDir, strings.TrimSuffix(filepath.Base(srcDocxPath), filepath.Ext(srcDocxPath))+".pdf")
 	if _, err := os.Stat(generated); err != nil {
-		return fmt.Errorf("pdf not generated: %w", err)
+		return uerr.NewError(fmt.Errorf("pdf not generated: %w", err))
 	}
 
 	return moveFileForEnd(generated, dstPDFPath)
 }
 
 func moveFileForEnd(srcPath string, dstPath string) error {
-	err := os.Rename(srcPath, dstPath)
+	err := renameFileForEndFn(srcPath, dstPath)
 	if err == nil {
 		return nil
 	}
 
-	srcFile, err := os.Open(srcPath)
+	srcFile, err := openFileForEndFn(srcPath)
 	if err != nil {
-		return err
+		return uerr.NewError(err)
 	}
 	defer srcFile.Close()
 
-	dstFile, err := os.Create(dstPath)
+	dstFile, err := createFileForEndFn(dstPath)
 	if err != nil {
-		return err
+		return uerr.NewError(err)
 	}
 	defer dstFile.Close()
 
-	if _, err = io.Copy(dstFile, srcFile); err != nil {
-		return err
+	if _, err = copyFileForEndFn(dstFile, srcFile); err != nil {
+		return uerr.NewError(err)
 	}
 
-	return os.Remove(srcPath)
+	// The temporary workspace is removed by convertDocxToPDF defer cleanup.
+	// A transient lock on Windows should not fail contest_end once dst file is copied.
+	cleanupAttempts, cleanupErr := removeFileForEndWithRetry(srcPath)
+	if cleanupErr != nil {
+		if log.Logger != nil {
+			log.Logger.Warn(fmt.Sprintf(
+				"contest_end temporary pdf cleanup failed after %d attempts: src=%s dst=%s err=%s",
+				cleanupAttempts,
+				srcPath,
+				dstPath,
+				cleanupErr.Error(),
+			))
+		}
+	} else if cleanupAttempts > 1 {
+		if log.Logger != nil {
+			log.Logger.Debug(fmt.Sprintf(
+				"contest_end temporary pdf cleanup recovered after retry: attempts=%d src=%s",
+				cleanupAttempts,
+				srcPath,
+			))
+		}
+	}
+
+	return nil
+}
+
+func removeFileForEndWithRetry(srcPath string) (int, error) {
+	attempts := 0
+	for {
+		attempts++
+		err := removeFileForEndFn(srcPath)
+		if err == nil {
+			return attempts, nil
+		}
+
+		backoffIdx := attempts - 1
+		if backoffIdx >= len(cleanupRetryBackoffsForEnd) {
+			return attempts, err
+		}
+
+		if sleepForEndFn != nil {
+			sleepForEndFn(cleanupRetryBackoffsForEnd[backoffIdx])
+		}
+	}
 }
 
 func toFloat64ForEnd(value any) float64 {
