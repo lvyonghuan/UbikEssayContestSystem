@@ -42,7 +42,7 @@ var (
 	resolveFlowForExecutionFn      = pgsql.ResolveFlowForExecution
 
 	executeScriptChainFn = func(chain scriptflow.ChainConfig, input scriptflow.ExecuteInput) (scriptflow.ChainResult, error) {
-		executor := scriptflow.NewExecutor(".", 5*time.Second, []string{"python3", "python", "bash", "sh", "node", scriptflow.InterpreterBuiltinGo})
+		executor := scriptflow.NewExecutor(".", 5*time.Second, []string{"python3", "python", "bash", "sh", "node"})
 		return executor.ExecuteChain(context.Background(), chain, input)
 	}
 

@@ -114,5 +114,8 @@ func moveFile(srcPath string, dstPath string) error {
 		return err
 	}
 
-	return os.Remove(srcPath)
+	// Do not remove srcPath here. The caller owns the temp working directory
+	// lifecycle and may clean it later; immediate removal can fail on Windows
+	// due to short-lived file locks from external converters.
+	return nil
 }

@@ -293,7 +293,7 @@ func ensureContestEndBuiltinFlowDefinition() (int, error) {
 	flow := model.ScriptFlow{
 		FlowKey:     contestEndBuiltinFlowKey,
 		FlowName:    contestEndBuiltinFlowName,
-		Description: "Built-in contest_end flow. Ensure review results regeneration and PDF export are executed in script flow pipeline.",
+		Description: "Built-in contest_end flow. Ensure track PDF export is executed in script flow pipeline.",
 		IsEnabled:   true,
 		Meta: map[string]any{
 			"builtin": true,
@@ -355,37 +355,24 @@ func ensureContestEndBuiltinFlowSteps(
 		return uerr.ExtractError(err)
 	}
 
-	hasRegenerate := false
 	hasExport := false
+	removedRegenerate := false
+	merged := make([]model.FlowStep, 0, len(steps)+1)
 	for _, step := range steps {
-		if step.ScriptVersionID == regenerateVersionID || step.ScriptID == regenerateScriptID {
-			hasRegenerate = true
+		if step.ScriptVersionID == regenerateVersionID || step.ScriptID == regenerateScriptID || strings.TrimSpace(step.StepName) == "builtin_regenerate_review_results" {
+			removedRegenerate = true
+			continue
 		}
 		if step.ScriptVersionID == exportVersionID || step.ScriptID == exportScriptID {
 			hasExport = true
 		}
+		step.StepID = 0
+		merged = append(merged, step)
 	}
 
-	if hasRegenerate && hasExport {
-		return nil
-	}
-
-	merged := make([]model.FlowStep, 0, len(steps)+2)
-	if !hasRegenerate {
-		merged = append(merged, model.FlowStep{
-			StepName:        "builtin_regenerate_review_results",
-			ScriptID:        regenerateScriptID,
-			ScriptVersionID: regenerateVersionID,
-			TimeoutMs:       60000,
-			FailureStrategy: "fail_close",
-			InputTemplate: map[string]any{
-				"handler": "regenerate_review_results",
-			},
-			IsEnabled: true,
-		})
-	}
+	insertedExport := false
 	if !hasExport {
-		merged = append(merged, model.FlowStep{
+		merged = append([]model.FlowStep{{
 			StepName:        "builtin_export_track_pdfs",
 			ScriptID:        exportScriptID,
 			ScriptVersionID: exportVersionID,
@@ -395,12 +382,12 @@ func ensureContestEndBuiltinFlowSteps(
 				"handler": "export_track_pdfs",
 			},
 			IsEnabled: true,
-		})
+		}}, merged...)
+		insertedExport = true
 	}
 
-	for _, step := range steps {
-		step.StepID = 0
-		merged = append(merged, step)
+	if !insertedExport && !removedRegenerate {
+		return nil
 	}
 
 	for i := range merged {
@@ -414,7 +401,7 @@ func ensureContestEndBuiltinFlowSteps(
 	if log.Logger != nil {
 		log.Logger.Warn(
 			"contest_end builtin steps ensured in flow: flowID=" + strconv.Itoa(flowID) +
-				" insertedRegenerate=" + strconv.FormatBool(!hasRegenerate) +
+				" removedRegenerate=" + strconv.FormatBool(removedRegenerate) +
 				" insertedExport=" + strconv.FormatBool(!hasExport),
 		)
 	}

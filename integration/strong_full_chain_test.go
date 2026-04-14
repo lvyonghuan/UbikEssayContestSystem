@@ -619,7 +619,7 @@ func mustInstallSubmissionHooks(t *testing.T, client *http.Client, adminBaseURL 
 	limitVersionID := mustUploadScriptVersion(t, client, adminBaseURL, adminToken, limitScriptID, filepath.Join(repoRoot, "scripts", "submission_hooks", "limit_three_submissions.py"))
 
 	wordScriptID := mustCreateScriptDefinition(t, client, adminBaseURL, adminToken, wordScriptKey, "Count Words", "python")
-	wordVersionID := mustUploadScriptVersion(t, client, adminBaseURL, adminToken, wordScriptID, filepath.Join(repoRoot, "scripts", "submission_hooks", "count_docx_words.py"))
+	wordVersionID := mustUploadScriptVersion(t, client, adminBaseURL, adminToken, wordScriptID, filepath.Join(repoRoot, "scripts", "word_num_count", "v1", "count_docx_words.py"))
 
 	limitFlowID := mustCreateScriptFlow(t, client, adminBaseURL, adminToken, "submission_pre_limit_"+safeSuffix, "Submission Pre Limit")
 	mustReplaceFlowSteps(t, client, adminBaseURL, adminToken, limitFlowID, []map[string]any{{

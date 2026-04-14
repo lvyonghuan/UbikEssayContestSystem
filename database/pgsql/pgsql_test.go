@@ -4,6 +4,7 @@ import (
 	"main/conf"
 	"main/model"
 	_const "main/util/const"
+	"strings"
 	"testing"
 	"time"
 
@@ -646,6 +647,18 @@ func TestScriptFlowFunctions(t *testing.T) {
 	if err != nil || len(listedSteps) != 1 {
 		t.Fatalf("ListFlowSteps failed: %v len=%d", err, len(listedSteps))
 	}
+	var versionCheck struct {
+		ScriptVersionID *int `gorm:"column:script_version_id"`
+	}
+	if err = postgresDB.Table("script_flow_steps").
+		Select("script_version_id").
+		Where("flow_id = ? AND step_order = ?", flow.FlowID, 1).
+		Take(&versionCheck).Error; err != nil {
+		t.Fatalf("query script_flow_steps failed: %v", err)
+	}
+	if versionCheck.ScriptVersionID != nil {
+		t.Fatalf("expected script_version_id to be NULL when version is not specified, got %d", *versionCheck.ScriptVersionID)
+	}
 
 	mount := &model.FlowMount{FlowID: flow.FlowID, Scope: "submission", EventKey: "file_pre", TargetType: "global", TargetID: 0, IsEnabled: true}
 	if err = CreateFlowMount(mount); err != nil {
@@ -733,6 +746,98 @@ func TestScriptFlowFunctions(t *testing.T) {
 	}
 	if _, _, err = ResolveFlowForExecution("submission", "file_pre", "track", 999); err != ErrFlowNotMounted {
 		t.Fatalf("expected ErrFlowNotMounted, got %v", err)
+	}
+}
+
+func TestResolveFlowForExecutionSkipsContestEndBuiltinOutsideContestEnd(t *testing.T) {
+	setupTestDB(t)
+
+	def := &model.ScriptDefinition{
+		ScriptKey:   "contest_end_regenerate_review_results_builtin",
+		ScriptName:  "Contest End Regenerate",
+		Interpreter: "builtin_go",
+		Description: "legacy contest_end builtin",
+		IsEnabled:   false,
+		Meta:        map[string]any{"builtin": true},
+	}
+	if err := CreateScriptDefinition(def); err != nil {
+		t.Fatalf("CreateScriptDefinition failed: %v", err)
+	}
+	if err := SetScriptDefinitionEnabled(def.ScriptID, false); err != nil {
+		t.Fatalf("SetScriptDefinitionEnabled failed: %v", err)
+	}
+	defAfterDisable, err := GetScriptDefinitionByID(def.ScriptID)
+	if err != nil {
+		t.Fatalf("GetScriptDefinitionByID failed: %v", err)
+	}
+	if defAfterDisable.IsEnabled {
+		t.Fatalf("expected script definition to be disabled, got %+v", defAfterDisable)
+	}
+
+	version := &model.ScriptVersion{
+		ScriptID:     def.ScriptID,
+		VersionNum:   1,
+		FileName:     "regenerate.builtin",
+		RelativePath: "builtin/contest_end/regenerate_review_results",
+		Checksum:     "builtin:test",
+		IsActive:     true,
+		CreatedBy:    1,
+	}
+	if err := CreateScriptVersion(version); err != nil {
+		t.Fatalf("CreateScriptVersion failed: %v", err)
+	}
+
+	flow := &model.ScriptFlow{FlowKey: "legacy_submission_flow", FlowName: "Legacy Submission Flow", IsEnabled: true}
+	if err := CreateScriptFlow(flow); err != nil {
+		t.Fatalf("CreateScriptFlow failed: %v", err)
+	}
+
+	if err := ReplaceFlowSteps(flow.FlowID, []model.FlowStep{{
+		StepOrder:       1,
+		StepName:        "legacy_regenerate_step",
+		ScriptID:        def.ScriptID,
+		ScriptVersionID: version.VersionID,
+		TimeoutMs:       1000,
+		FailureStrategy: "fail_close",
+		IsEnabled:       true,
+	}}); err != nil {
+		t.Fatalf("ReplaceFlowSteps failed: %v", err)
+	}
+	stepsAfterReplace, err := ListFlowSteps(flow.FlowID)
+	if err != nil {
+		t.Fatalf("ListFlowSteps failed: %v", err)
+	}
+	if len(stepsAfterReplace) != 1 {
+		t.Fatalf("expected one step in flow, got %d", len(stepsAfterReplace))
+	}
+	if shouldSkipStepForScope(defAfterDisable, "system", "contest_end") {
+		t.Fatalf("contest_end builtin should not be skipped under system/contest_end")
+	}
+
+	if err := CreateFlowMount(&model.FlowMount{FlowID: flow.FlowID, Scope: "submission", EventKey: "file_post", TargetType: "global", TargetID: 0, IsEnabled: true}); err != nil {
+		t.Fatalf("CreateFlowMount submission failed: %v", err)
+	}
+	if err := CreateFlowMount(&model.FlowMount{FlowID: flow.FlowID, Scope: "system", EventKey: "contest_end", TargetType: "global", TargetID: 0, IsEnabled: true}); err != nil {
+		t.Fatalf("CreateFlowMount system failed: %v", err)
+	}
+
+	resolvedFlow, resolvedSteps, err := ResolveFlowForExecution("submission", "file_post", "track", 2)
+	if err != nil {
+		t.Fatalf("ResolveFlowForExecution should skip legacy contest_end step in submission context, got err: %v", err)
+	}
+	if resolvedFlow.FlowID != flow.FlowID {
+		t.Fatalf("unexpected flow resolved: %+v", resolvedFlow)
+	}
+	if len(resolvedSteps) != 0 {
+		t.Fatalf("expected no executable steps in submission context, got %d", len(resolvedSteps))
+	}
+
+	_, _, err = ResolveFlowForExecution("system", "contest_end", "track", 2)
+	if err == nil {
+		t.Fatal("expected disabled script error in system/contest_end context")
+	}
+	if !strings.Contains(err.Error(), "script is disabled: contest_end_regenerate_review_results_builtin") {
+		t.Fatalf("unexpected error in contest_end context: %v", err)
 	}
 }
 

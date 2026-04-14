@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  buildSubmissionWordCountPreset,
   createFlowMount,
   createScriptFlow,
   fetchFlowMounts,
@@ -24,9 +23,21 @@ import type {
   ScriptVersion,
 } from '@/types/api'
 
-type StepEditorMode = 'form' | 'json'
-type FlowManageMode = 'guided' | 'expert'
 type FailureStrategy = 'fail_close' | 'fail_open' | 'retry'
+type StepVersionMode = 'active' | 'fixed'
+
+interface StepRowForm {
+  stepID?: number
+  stepOrder: number
+  stepName: string
+  scriptID?: number
+  versionMode: StepVersionMode
+  scriptVersionID?: number
+  isEnabled: boolean
+  failureStrategy: FailureStrategy | string
+  timeoutMs: number
+  inputTemplateText: string
+}
 
 const flowKeyPattern = /^[a-zA-Z0-9_-]+$/
 
@@ -66,38 +77,9 @@ const targetTypeLabelMap: Record<FlowMountTargetType, string> = {
   track: '赛道',
 }
 
-interface StepRowForm {
-  stepID?: number
-  stepOrder: number
-  stepName: string
-  scriptID?: number
-  scriptVersionID?: number
-  isEnabled: boolean
-  failureStrategy: FailureStrategy | string
-  timeoutMs: number
-  inputTemplateText: string
-}
-
-const manageMode = ref<FlowManageMode>('guided')
 const loading = ref(false)
 const flows = ref<ScriptFlow[]>([])
 const scripts = ref<ScriptDefinition[]>([])
-
-const guidedSubmitting = ref(false)
-const guidedVersionLoading = ref(false)
-const guidedVersions = ref<ScriptVersion[]>([])
-const guidedForm = reactive({
-  scriptID: undefined as number | undefined,
-  scriptVersionID: undefined as number | undefined,
-  flowName: '投稿后字数统计',
-  flowKey: '',
-  scope: 'submission' as FlowMountScope,
-  eventKey: 'file_post',
-  targetType: 'track' as FlowMountTargetType,
-  targetIDText: '',
-  timeoutMs: 20000,
-  failureStrategy: 'fail_close' as FailureStrategy,
-})
 
 const flowDialogVisible = ref(false)
 const editingFlowId = ref<number | null>(null)
@@ -112,10 +94,13 @@ const flowForm = reactive({
 const stepDrawerVisible = ref(false)
 const stepLoading = ref(false)
 const stepSaving = ref(false)
-const stepEditorMode = ref<StepEditorMode>('form')
 const stepEditorText = ref('[]')
+const advancedJsonOpen = ref<string[]>([])
 const stepRows = ref<StepRowForm[]>([])
 const currentStepFlow = ref<ScriptFlow | null>(null)
+const draggingStepIndex = ref<number | null>(null)
+const scriptVersionsByScriptID = ref<Record<number, ScriptVersion[]>>({})
+const scriptVersionLoadingByScriptID = ref<Record<number, boolean>>({})
 
 const mountDrawerVisible = ref(false)
 const mountLoading = ref(false)
@@ -152,6 +137,13 @@ const mountEventOptions = computed(() => {
   return options.length > 0 ? options : eventKeyOptions
 })
 
+const mountPreviewText = computed(() => {
+  const target = mountForm.targetType === 'global'
+    ? '全局'
+    : `${formatTargetType(mountForm.targetType)} #${mountForm.targetIDText || '?'}`
+  return `将在 ${formatScope(mountForm.scope)} 的 ${formatEventKey(mountForm.eventKey)} 事件下触发，作用范围：${target}`
+})
+
 function parseJsonObject(text: string, errorMessage: string) {
   try {
     const parsed = text.trim() ? JSON.parse(text) : {}
@@ -178,6 +170,7 @@ function detectFlowTrigger(flow: ScriptFlow | null) {
   if (!flow) {
     return fallback
   }
+
   const meta = normalizeFlowMeta(flow)
   if (typeof meta.trigger === 'string' && meta.trigger.trim()) {
     const eventKey = meta.trigger.trim()
@@ -220,11 +213,19 @@ function formatTargetType(targetType: string | undefined) {
   return targetTypeLabelMap[targetType as FlowMountTargetType] || targetType
 }
 
+function formatVersionOption(version: ScriptVersion) {
+  const name = version.versionName || (version.versionNum ? `v${version.versionNum}` : `#${version.versionID}`)
+  const active = version.isActive ? ' [激活]' : ''
+  const path = version.relativePath ? ` | ${version.relativePath}` : ''
+  return `${name}${active}${path}`
+}
+
 function defaultStepRow(order: number): StepRowForm {
   return {
     stepOrder: order,
     stepName: `步骤 ${order}`,
     scriptID: scripts.value[0]?.scriptID,
+    versionMode: 'active',
     scriptVersionID: undefined,
     isEnabled: true,
     failureStrategy: 'fail_close',
@@ -240,6 +241,7 @@ function normalizeStepRow(step: FlowStep, index: number): StepRowForm {
     stepOrder: Number.isInteger(step.stepOrder) && step.stepOrder > 0 ? step.stepOrder : index + 1,
     stepName: step.stepName || `步骤 ${index + 1}`,
     scriptID: step.scriptID,
+    versionMode: step.scriptVersionID ? 'fixed' : 'active',
     scriptVersionID: step.scriptVersionID,
     isEnabled: step.isEnabled ?? true,
     failureStrategy: normalizeFailureStrategy(step.failureStrategy),
@@ -248,30 +250,36 @@ function normalizeStepRow(step: FlowStep, index: number): StepRowForm {
   }
 }
 
-function mapStepRowsToPayload(rows: StepRowForm[]) {
+function mapStepRowsToPayload(rows: StepRowForm[], showWarning = true) {
+  const warn = (message: string) => {
+    if (showWarning) {
+      ElMessage.warning(message)
+    }
+  }
+
   const nextSteps: FlowStep[] = []
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index]
-    if (!Number.isInteger(row.stepOrder) || row.stepOrder <= 0) {
-      ElMessage.warning(`第 ${index + 1} 行步骤顺序需要是正整数`)
-      return null
-    }
     if (!row.scriptID) {
-      ElMessage.warning(`第 ${index + 1} 行需要选择脚本`)
+      warn(`第 ${index + 1} 步需要选择脚本`)
       return null
     }
     if (!row.stepName.trim()) {
-      ElMessage.warning(`第 ${index + 1} 行需要填写步骤名称`)
+      warn(`第 ${index + 1} 步需要填写步骤名称`)
+      return null
+    }
+    if (row.versionMode === 'fixed' && !row.scriptVersionID) {
+      warn(`第 ${index + 1} 步已设置锁定版本，请选择脚本版本`)
       return null
     }
     if (!Number.isInteger(row.timeoutMs) || row.timeoutMs <= 0) {
-      ElMessage.warning(`第 ${index + 1} 行超时时间需要是正整数`)
+      warn(`第 ${index + 1} 步超时时间需要是正整数`)
       return null
     }
 
     const inputTemplate = parseJsonObject(
       row.inputTemplateText,
-      `第 ${index + 1} 行输入模板必须是合法 JSON 对象`,
+      `第 ${index + 1} 步脚本运行参数必须是合法 JSON 对象`,
     )
     if (!inputTemplate) {
       return null
@@ -279,10 +287,10 @@ function mapStepRowsToPayload(rows: StepRowForm[]) {
 
     nextSteps.push({
       stepID: row.stepID,
-      stepOrder: row.stepOrder,
+      stepOrder: index + 1,
       stepName: row.stepName.trim(),
       scriptID: row.scriptID,
-      scriptVersionID: row.scriptVersionID,
+      scriptVersionID: row.versionMode === 'fixed' ? row.scriptVersionID : undefined,
       isEnabled: row.isEnabled,
       failureStrategy: normalizeFailureStrategy(row.failureStrategy),
       timeoutMs: row.timeoutMs,
@@ -290,32 +298,33 @@ function mapStepRowsToPayload(rows: StepRowForm[]) {
       stepConfig: inputTemplate,
     })
   }
+
   return nextSteps
 }
 
-function parseStepsFromJsonEditor() {
+function parseStepRowsFromJsonEditor() {
   let parsed: unknown
   try {
     parsed = JSON.parse(stepEditorText.value || '[]')
   } catch {
-    ElMessage.error('步骤配置必须是合法 JSON 数组')
+    ElMessage.error('高级 JSON 必须是合法 JSON 数组')
     return null
   }
 
   if (!Array.isArray(parsed)) {
-    ElMessage.error('步骤配置必须是 JSON 数组')
+    ElMessage.error('高级 JSON 必须是数组')
     return null
   }
 
-  const rows = parsed.map((item, index) => normalizeStepRow(item as FlowStep, index))
-  return mapStepRowsToPayload(rows)
+  return parsed.map((item, index) => normalizeStepRow(item as FlowStep, index))
 }
 
 function syncJsonFromRows(rows: StepRowForm[]) {
-  const payload = mapStepRowsToPayload(rows)
+  const payload = mapStepRowsToPayload(rows, false)
   if (!payload) {
     return false
   }
+
   stepEditorText.value = JSON.stringify(payload, null, 2)
   return true
 }
@@ -334,6 +343,59 @@ function resolveTargetID(mount: FlowMount) {
     return targetID
   }
   return resolveTargetType(mount) === 'global' ? 0 : null
+}
+
+function getScriptByID(scriptID: number | undefined) {
+  if (!scriptID) {
+    return null
+  }
+  return scripts.value.find((item) => item.scriptID === scriptID) || null
+}
+
+function getVersionsForScript(scriptID: number | undefined) {
+  if (!scriptID) {
+    return []
+  }
+  return scriptVersionsByScriptID.value[scriptID] || []
+}
+
+function isVersionListLoading(scriptID: number | undefined) {
+  if (!scriptID) {
+    return false
+  }
+  return Boolean(scriptVersionLoadingByScriptID.value[scriptID])
+}
+
+function getActiveVersion(scriptID: number | undefined) {
+  const versions = getVersionsForScript(scriptID)
+  if (versions.length === 0) {
+    return null
+  }
+  return versions.find((item) => item.isActive) || versions[0]
+}
+
+function resolveStepVersion(row: StepRowForm) {
+  if (!row.scriptID) {
+    return null
+  }
+  if (row.versionMode === 'active') {
+    return getActiveVersion(row.scriptID)
+  }
+  return getVersionsForScript(row.scriptID).find((item) => item.versionID === row.scriptVersionID) || null
+}
+
+function resolveStepExecutionPath(row: StepRowForm) {
+  const version = resolveStepVersion(row)
+  return version?.relativePath || '-'
+}
+
+function resolveStepVersionLabel(row: StepRowForm) {
+  const version = resolveStepVersion(row)
+  if (!version) {
+    return row.versionMode === 'active' ? '跟随激活版本（未加载）' : '锁定版本（未选择）'
+  }
+  const versionName = version.versionName || (version.versionNum ? `v${version.versionNum}` : `#${version.versionID}`)
+  return row.versionMode === 'active' ? `跟随激活版本 ${versionName}` : `锁定版本 ${versionName}`
 }
 
 function resetFlowForm() {
@@ -362,7 +424,7 @@ function resetMountForm(flow: ScriptFlow | null) {
 
 function validateFlowKey(flowKey: string, fieldLabel: string) {
   if (!flowKey.trim()) {
-    ElMessage.warning(`${fieldLabel}不能为空`) 
+    ElMessage.warning(`${fieldLabel}不能为空`)
     return false
   }
   if (!flowKeyPattern.test(flowKey.trim())) {
@@ -372,29 +434,18 @@ function validateFlowKey(flowKey: string, fieldLabel: string) {
   return true
 }
 
-function generateGuidedFlowKey() {
-  const now = new Date()
-  const stamp = [
-    now.getUTCFullYear(),
-    String(now.getUTCMonth() + 1).padStart(2, '0'),
-    String(now.getUTCDate()).padStart(2, '0'),
-    String(now.getUTCHours()).padStart(2, '0'),
-    String(now.getUTCMinutes()).padStart(2, '0'),
-    String(now.getUTCSeconds()).padStart(2, '0'),
-  ].join('')
-  return `submission_word_count_${stamp}_${Math.floor(Math.random() * 1000)}`
-}
-
-function getPreferredScriptID() {
-  return scripts.value.find((item) => item.isEnabled !== false && item.scriptID)?.scriptID || scripts.value[0]?.scriptID
-}
-
 function parsePositiveInteger(text: string) {
   const value = Number(text)
   if (!Number.isInteger(value) || value <= 0) {
     return null
   }
   return value
+}
+
+function reindexStepOrders() {
+  stepRows.value.forEach((row, index) => {
+    row.stepOrder = index + 1
+  })
 }
 
 function syncMountEventWithScope() {
@@ -418,119 +469,105 @@ function syncTargetIDWithTargetType() {
   }
 }
 
-function resetGuidedForm() {
-  guidedForm.flowName = '投稿后字数统计'
-  guidedForm.flowKey = generateGuidedFlowKey()
-  guidedForm.scope = 'submission'
-  guidedForm.eventKey = 'file_post'
-  guidedForm.targetType = 'track'
-  guidedForm.targetIDText = ''
-  guidedForm.timeoutMs = 20000
-  guidedForm.failureStrategy = 'fail_close'
-  guidedForm.scriptID = getPreferredScriptID()
-  guidedForm.scriptVersionID = undefined
-  guidedVersions.value = []
-}
-
-async function loadGuidedVersions(scriptID: number | undefined) {
+async function ensureVersionsLoaded(scriptID: number | undefined) {
   if (!scriptID) {
-    guidedVersions.value = []
-    guidedForm.scriptVersionID = undefined
+    return
+  }
+  if (scriptVersionsByScriptID.value[scriptID]) {
     return
   }
 
-  guidedVersionLoading.value = true
+  scriptVersionLoadingByScriptID.value = {
+    ...scriptVersionLoadingByScriptID.value,
+    [scriptID]: true,
+  }
+
   try {
     const versions = await fetchScriptVersions(scriptID)
-    guidedVersions.value = versions
-    const activeVersion = versions.find((item) => item.isActive)
-    guidedForm.scriptVersionID = activeVersion?.versionID || versions[0]?.versionID
+    scriptVersionsByScriptID.value = {
+      ...scriptVersionsByScriptID.value,
+      [scriptID]: versions,
+    }
   } catch (error) {
-    guidedVersions.value = []
-    guidedForm.scriptVersionID = undefined
     ElMessage.error(error instanceof Error ? error.message : '脚本版本加载失败')
   } finally {
-    guidedVersionLoading.value = false
+    scriptVersionLoadingByScriptID.value = {
+      ...scriptVersionLoadingByScriptID.value,
+      [scriptID]: false,
+    }
   }
 }
 
-function onGuidedTargetTypeChange() {
-  if (guidedForm.targetType === 'global') {
-    guidedForm.targetIDText = '0'
+function moveStep(fromIndex: number, toIndex: number) {
+  if (
+    fromIndex < 0
+    || toIndex < 0
+    || fromIndex >= stepRows.value.length
+    || toIndex >= stepRows.value.length
+    || fromIndex === toIndex
+  ) {
     return
   }
-  if (guidedForm.targetIDText === '0') {
-    guidedForm.targetIDText = ''
-  }
+
+  const [moved] = stepRows.value.splice(fromIndex, 1)
+  stepRows.value.splice(toIndex, 0, moved)
+  reindexStepOrders()
+  syncJsonFromRows(stepRows.value)
 }
 
-async function createGuidedWordCountFlow() {
-  const scriptID = guidedForm.scriptID
-  const scriptVersionID = guidedForm.scriptVersionID
-  const flowName = guidedForm.flowName.trim()
-  const flowKey = guidedForm.flowKey.trim()
+function moveStepUp(index: number) {
+  moveStep(index, index - 1)
+}
 
-  if (!scriptID) {
-    ElMessage.warning('请先选择脚本')
+function moveStepDown(index: number) {
+  moveStep(index, index + 1)
+}
+
+function onStepDragStart(index: number) {
+  draggingStepIndex.value = index
+}
+
+function onStepDragOver(event: DragEvent) {
+  event.preventDefault()
+}
+
+function onStepDrop(index: number) {
+  if (draggingStepIndex.value === null) {
     return
   }
-  if (!scriptVersionID) {
-    ElMessage.warning('请先选择脚本版本')
+  moveStep(draggingStepIndex.value, index)
+  draggingStepIndex.value = null
+}
+
+function onStepDragEnd() {
+  draggingStepIndex.value = null
+}
+
+function refreshJsonFromRows() {
+  if (!syncJsonFromRows(stepRows.value)) {
+    ElMessage.warning('当前卡片存在未完成字段，无法生成 JSON')
     return
   }
-  if (!flowName) {
-    ElMessage.warning('请填写流程名称')
+  ElMessage.success('已根据卡片刷新高级 JSON')
+}
+
+async function applyJsonToRows() {
+  const parsedRows = parseStepRowsFromJsonEditor()
+  if (!parsedRows) {
     return
   }
-  if (!validateFlowKey(flowKey, '流程键(flowKey)')) {
+
+  const payload = mapStepRowsToPayload(parsedRows)
+  if (!payload) {
     return
   }
 
-  let targetID = 0
-  if (guidedForm.targetType !== 'global') {
-    const parsedTargetID = parsePositiveInteger(guidedForm.targetIDText)
-    if (!parsedTargetID) {
-      ElMessage.warning('目标 ID 需要是正整数')
-      return
-    }
-    targetID = parsedTargetID
-  }
+  stepRows.value = payload.map((item, index) => normalizeStepRow(item, index))
+  reindexStepOrders()
 
-  guidedSubmitting.value = true
-  try {
-    const preset = buildSubmissionWordCountPreset({
-      flowName,
-      flowKey,
-      scriptID,
-      scriptVersionID,
-      scope: guidedForm.scope,
-      eventKey: guidedForm.eventKey,
-      targetType: guidedForm.targetType,
-      targetID,
-      failureStrategy: guidedForm.failureStrategy,
-      timeoutMs: guidedForm.timeoutMs,
-    })
-
-    const createdFlow = await createScriptFlow(preset.flow)
-    if (!createdFlow.flowID) {
-      throw new Error('流程创建结果缺少 flowID')
-    }
-
-    await replaceFlowSteps(createdFlow.flowID, preset.steps)
-    await createFlowMount({
-      ...preset.mount,
-      flowID: createdFlow.flowID,
-    })
-    await updateScriptFlowStatus(createdFlow.flowID, { isEnabled: true })
-
-    ElMessage.success('已完成字数统计模板创建，可在专家模式继续调整')
-    await loadFlows()
-    resetGuidedForm()
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '模板创建失败')
-  } finally {
-    guidedSubmitting.value = false
-  }
+  await Promise.all(stepRows.value.map((item) => ensureVersionsLoaded(item.scriptID)))
+  syncJsonFromRows(stepRows.value)
+  ElMessage.success('已将高级 JSON 应用到步骤卡片')
 }
 
 async function loadFlows() {
@@ -539,13 +576,6 @@ async function loadFlows() {
     const [nextFlows, nextScripts] = await Promise.all([fetchScriptFlows(), fetchScriptDefinitions()])
     flows.value = nextFlows
     scripts.value = nextScripts
-
-    if (!guidedForm.scriptID || !scripts.value.some((item) => item.scriptID === guidedForm.scriptID)) {
-      guidedForm.scriptID = getPreferredScriptID()
-    }
-    if (!guidedForm.flowKey) {
-      guidedForm.flowKey = generateGuidedFlowKey()
-    }
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '流程列表加载失败')
   } finally {
@@ -643,9 +673,9 @@ async function openStepDrawer(flow: ScriptFlow) {
   }
 
   currentStepFlow.value = flow
-  stepEditorMode.value = 'form'
   stepRows.value = [defaultStepRow(1)]
   stepEditorText.value = '[]'
+  advancedJsonOpen.value = []
   stepDrawerVisible.value = true
   stepLoading.value = true
 
@@ -654,7 +684,10 @@ async function openStepDrawer(flow: ScriptFlow) {
     const normalizedRows = nextSteps.length > 0
       ? nextSteps.map((item, index) => normalizeStepRow(item, index))
       : [defaultStepRow(1)]
+
     stepRows.value = normalizedRows
+    reindexStepOrders()
+    await Promise.all(stepRows.value.map((item) => ensureVersionsLoaded(item.scriptID)))
     syncJsonFromRows(stepRows.value)
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '流程步骤加载失败')
@@ -663,23 +696,32 @@ async function openStepDrawer(flow: ScriptFlow) {
   }
 }
 
-function onStepEditorModeChange(mode: StepEditorMode) {
-  if (mode === 'json') {
+async function onStepScriptChange(row: StepRowForm) {
+  row.versionMode = 'active'
+  row.scriptVersionID = undefined
+  await ensureVersionsLoaded(row.scriptID)
+  syncJsonFromRows(stepRows.value)
+}
+
+function onStepVersionModeChange(row: StepRowForm) {
+  if (row.versionMode === 'active') {
+    row.scriptVersionID = undefined
     syncJsonFromRows(stepRows.value)
     return
   }
 
-  const parsed = parseStepsFromJsonEditor()
-  if (!parsed) {
-    stepEditorMode.value = 'json'
-    return
+  if (!row.scriptVersionID) {
+    const activeVersion = getActiveVersion(row.scriptID)
+    row.scriptVersionID = activeVersion?.versionID
   }
-  stepRows.value = parsed.map((item, index) => normalizeStepRow(item, index))
+  syncJsonFromRows(stepRows.value)
 }
 
 function addStepRow() {
   const maxOrder = stepRows.value.reduce((max, item) => Math.max(max, item.stepOrder), 0)
   stepRows.value.push(defaultStepRow(maxOrder + 1))
+  reindexStepOrders()
+  syncJsonFromRows(stepRows.value)
 }
 
 function removeStepRow(index: number) {
@@ -687,6 +729,8 @@ function removeStepRow(index: number) {
   if (stepRows.value.length === 0) {
     stepRows.value.push(defaultStepRow(1))
   }
+  reindexStepOrders()
+  syncJsonFromRows(stepRows.value)
 }
 
 async function saveFlowSteps() {
@@ -695,10 +739,7 @@ async function saveFlowSteps() {
     return
   }
 
-  const payload = stepEditorMode.value === 'form'
-    ? mapStepRowsToPayload(stepRows.value)
-    : parseStepsFromJsonEditor()
-
+  const payload = mapStepRowsToPayload(stepRows.value)
   if (!payload) {
     return
   }
@@ -707,6 +748,8 @@ async function saveFlowSteps() {
   try {
     await replaceFlowSteps(flowId, payload)
     stepRows.value = payload.map((item, index) => normalizeStepRow(item, index))
+    reindexStepOrders()
+    await Promise.all(stepRows.value.map((item) => ensureVersionsLoaded(item.scriptID)))
     syncJsonFromRows(stepRows.value)
     ElMessage.success('流程步骤已更新')
   } catch (error) {
@@ -804,154 +847,33 @@ async function deleteMount(mountId: number | undefined) {
   }
 }
 
-watch(
-  () => guidedForm.scriptID,
-  (scriptID) => {
-    void loadGuidedVersions(scriptID)
-  },
-)
-
-onMounted(async () => {
-  await loadFlows()
-  resetGuidedForm()
-})
+onMounted(loadFlows)
 </script>
 
 <template>
   <section class="page-card">
     <div class="header-row">
       <div>
-        <h1 class="page-title">流程管理</h1>
-        <p class="page-subtitle">默认新手向导，专家模式保留完整编排能力</p>
+        <h1 class="page-title">流程工作台</h1>
+        <p class="page-subtitle">面向 B 端运营的流程编排与挂载配置中心</p>
       </div>
-      <div class="header-actions">
-        <el-radio-group v-model="manageMode" size="small">
-          <el-radio-button label="guided">新手向导</el-radio-button>
-          <el-radio-button label="expert">专家模式</el-radio-button>
-        </el-radio-group>
-        <el-button v-if="manageMode === 'expert'" type="primary" @click="openCreateDialog">新建流程</el-button>
-      </div>
+      <el-button type="primary" @click="openCreateDialog">新建流程</el-button>
     </div>
 
     <el-alert type="info" :closable="false" show-icon>
-      新手向导会自动创建“投稿后字数统计”所需的流程、步骤和挂载。专家模式用于复杂场景。
+      执行链路：脚本定义(scriptKey) -> 版本(激活或锁定) -> 流程步骤 -> 挂载(scope/eventKey/target) -> 事件触发执行。
     </el-alert>
 
-    <section v-if="manageMode === 'guided'" class="guided-panel">
-      <h3 class="guided-title">一键配置：投稿后字数统计</h3>
-      <p class="guided-hint">默认配置：scope=submission、eventKey=file_post、failureStrategy=fail_close。</p>
-
-      <el-form label-position="top">
-        <el-row :gutter="12">
-          <el-col :xs="24" :md="12">
-            <el-form-item label="选择脚本" required>
-              <el-select v-model="guidedForm.scriptID" filterable placeholder="请选择脚本" style="width: 100%">
-                <el-option
-                  v-for="script in scripts"
-                  :key="script.scriptID"
-                  :label="`${script.scriptName}${script.isEnabled === false ? ' (已停用)' : ''}`"
-                  :value="script.scriptID"
-                />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :xs="24" :md="12">
-            <el-form-item label="选择脚本版本" required>
-              <el-select
-                v-model="guidedForm.scriptVersionID"
-                :loading="guidedVersionLoading"
-                filterable
-                placeholder="请选择版本"
-                style="width: 100%"
-              >
-                <el-option
-                  v-for="version in guidedVersions"
-                  :key="version.versionID"
-                  :label="`${version.versionName || `v${version.versionNum || version.versionID}`}${version.isActive ? ' (已激活)' : ''}`"
-                  :value="version.versionID"
-                />
-              </el-select>
-            </el-form-item>
-          </el-col>
-        </el-row>
-
-        <el-row :gutter="12">
-          <el-col :xs="24" :md="12">
-            <el-form-item label="流程名称" required>
-              <el-input v-model="guidedForm.flowName" />
-            </el-form-item>
-          </el-col>
-          <el-col :xs="24" :md="12">
-            <el-form-item label="流程键(flowKey)" required>
-              <el-input v-model="guidedForm.flowKey" placeholder="仅支持字母、数字、下划线和连字符" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-
-        <el-row :gutter="12">
-          <el-col :xs="24" :md="6">
-            <el-form-item label="执行域(scope)">
-              <el-select v-model="guidedForm.scope" disabled style="width: 100%">
-                <el-option v-for="item in mountScopeOptions" :key="item.value" :label="item.label" :value="item.value" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :xs="24" :md="6">
-            <el-form-item label="事件键(eventKey)">
-              <el-input :model-value="formatEventKey(guidedForm.eventKey)" disabled />
-            </el-form-item>
-          </el-col>
-          <el-col :xs="24" :md="6">
-            <el-form-item label="目标范围(targetType)">
-              <el-select v-model="guidedForm.targetType" style="width: 100%" @change="onGuidedTargetTypeChange">
-                <el-option v-for="item in targetTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :xs="24" :md="6">
-            <el-form-item label="目标ID(targetID)">
-              <el-input
-                v-model="guidedForm.targetIDText"
-                :disabled="guidedForm.targetType === 'global'"
-                placeholder="targetType 非 global 时需填正整数"
-              />
-            </el-form-item>
-          </el-col>
-        </el-row>
-
-        <el-row :gutter="12">
-          <el-col :xs="24" :md="12">
-            <el-form-item label="失败策略">
-              <el-select v-model="guidedForm.failureStrategy" style="width: 100%">
-                <el-option v-for="item in failureStrategyOptions" :key="item.value" :label="item.label" :value="item.value" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :xs="24" :md="12">
-            <el-form-item label="超时(ms)">
-              <el-input-number v-model="guidedForm.timeoutMs" :min="1000" :step="500" style="width: 100%" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-      </el-form>
-
-      <div class="guided-actions">
-        <el-button @click="resetGuidedForm">重置默认</el-button>
-        <el-button type="primary" :loading="guidedSubmitting" @click="createGuidedWordCountFlow">创建模板流程</el-button>
-      </div>
-    </section>
-
-    <template v-else>
     <el-table :data="flows" v-loading="loading" style="width: 100%">
       <el-table-column prop="flowID" label="ID" width="90" />
-      <el-table-column prop="flowKey" label="流程键" min-width="140" />
-      <el-table-column prop="flowName" label="流程名称" min-width="160" />
-      <el-table-column label="描述" min-width="200">
+      <el-table-column prop="flowKey" label="流程键" min-width="160" />
+      <el-table-column prop="flowName" label="流程名称" min-width="180" />
+      <el-table-column label="描述" min-width="220">
         <template #default="scope">
           {{ scope.row.description || scope.row.flowDescription || '-' }}
         </template>
       </el-table-column>
-      <el-table-column label="触发事件" width="220">
+      <el-table-column label="默认触发事件" width="240">
         <template #default="scope">
           {{ formatEventKey((scope.row.meta && scope.row.meta.trigger) || (scope.row.extensionData && scope.row.extensionData.trigger)) }}
         </template>
@@ -964,18 +886,18 @@ onMounted(async () => {
           />
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="260">
+      <el-table-column label="操作" width="300">
         <template #default="scope">
           <el-space>
-            <el-button link type="primary" @click="openEditDialog(scope.row)">编辑</el-button>
-            <el-button link type="success" @click="openStepDrawer(scope.row)">步骤</el-button>
-            <el-button link type="warning" @click="openMountDrawer(scope.row)">挂载</el-button>
+            <el-button link type="primary" @click="openEditDialog(scope.row)">编辑流程</el-button>
+            <el-button link type="success" @click="openStepDrawer(scope.row)">编排步骤</el-button>
+            <el-button link type="warning" @click="openMountDrawer(scope.row)">管理挂载</el-button>
           </el-space>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="flowDialogVisible" :title="editingFlowId ? '编辑流程' : '新建流程'" width="720px">
+    <el-dialog v-model="flowDialogVisible" :title="editingFlowId ? '编辑流程' : '新建流程'" width="760px">
       <el-form label-position="top">
         <el-row :gutter="12">
           <el-col :xs="24" :md="12">
@@ -989,10 +911,12 @@ onMounted(async () => {
             </el-form-item>
           </el-col>
         </el-row>
+
         <el-form-item label="流程描述">
           <el-input v-model="flowForm.flowDescription" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item label="默认事件键(eventKey)">
+
+        <el-form-item label="默认触发事件(eventKey)">
           <el-select
             v-model="flowForm.triggerEvent"
             filterable
@@ -1004,10 +928,12 @@ onMounted(async () => {
             <el-option v-for="item in eventKeyOptions" :key="item" :label="formatEventKey(item)" :value="item" />
           </el-select>
         </el-form-item>
-        <el-form-item label="流程元数据(meta，JSON)">
+
+        <el-form-item label="流程元数据(meta, JSON)">
           <el-input v-model="flowForm.metaText" type="textarea" :rows="8" />
         </el-form-item>
       </el-form>
+
       <template #footer>
         <el-button @click="flowDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="saveFlow">保存</el-button>
@@ -1016,64 +942,112 @@ onMounted(async () => {
 
     <el-drawer
       v-model="stepDrawerVisible"
-      size="840px"
-      :title="`步骤编辑 - ${currentStepFlow?.flowName || '未命名流程'}`"
+      size="920px"
+      :title="`流程编排 - ${currentStepFlow?.flowName || '未命名流程'}`"
     >
       <el-alert type="info" :closable="false" show-icon>
-        步骤支持表单模式与 JSON 模式。failureStrategy 请使用 fail_close / fail_open / retry。
+        主编辑区为“步骤卡片”。卡片支持拖拽排序。高级 JSON 仅作为批量编辑入口。
       </el-alert>
 
-      <div class="step-mode-bar">
-        <el-radio-group v-model="stepEditorMode" @change="onStepEditorModeChange">
-          <el-radio-button label="form">表单模式</el-radio-button>
-          <el-radio-button label="json">JSON 模式</el-radio-button>
-        </el-radio-group>
+      <el-alert type="success" :closable="false" class="runtime-input-hint" show-icon>
+        脚本固定收到两个输入对象：<strong>payload</strong>（事件现场数据）和 <strong>context.stepInput</strong>（这里填写的“脚本运行参数”）。
+        以 submission/file_post 为例，payload 常见字段有 savedPath、workID、authorID、trackID、fileHash、fileSize。
+      </el-alert>
+
+      <div class="step-toolbar">
+        <el-button plain type="primary" @click="addStepRow">新增步骤</el-button>
       </div>
 
-      <div v-if="stepEditorMode === 'form'" class="step-form-list" v-loading="stepLoading">
-        <article v-for="(row, index) in stepRows" :key="`${row.stepID || 'new'}-${index}`" class="step-row-card">
+      <div class="step-form-list" v-loading="stepLoading">
+        <article
+          v-for="(row, index) in stepRows"
+          :key="`${row.stepID || 'new'}-${index}`"
+          class="step-row-card"
+          :class="{ 'is-dragging': draggingStepIndex === index }"
+          draggable="true"
+          @dragstart="onStepDragStart(index)"
+          @dragover="onStepDragOver"
+          @drop="onStepDrop(index)"
+          @dragend="onStepDragEnd"
+        >
           <div class="step-row-head">
-            <strong>步骤 {{ index + 1 }}</strong>
-            <el-button link type="danger" @click="removeStepRow(index)">删除</el-button>
+            <div class="step-row-head-left">
+              <span class="drag-handle">::</span>
+              <strong>步骤 {{ row.stepOrder }}</strong>
+            </div>
+            <el-space>
+              <el-button link type="primary" :disabled="index === 0" @click="moveStepUp(index)">上移</el-button>
+              <el-button link type="primary" :disabled="index === stepRows.length - 1" @click="moveStepDown(index)">下移</el-button>
+              <el-button link type="danger" @click="removeStepRow(index)">删除</el-button>
+            </el-space>
           </div>
 
           <el-row :gutter="10">
-            <el-col :xs="24" :md="8">
-              <el-form-item label="顺序">
-                <el-input-number v-model="row.stepOrder" :min="1" style="width: 100%" />
-              </el-form-item>
-            </el-col>
-            <el-col :xs="24" :md="16">
-              <el-form-item label="步骤名称">
-                <el-input v-model="row.stepName" />
-              </el-form-item>
-            </el-col>
-          </el-row>
-
-          <el-row :gutter="10">
             <el-col :xs="24" :md="12">
-              <el-form-item label="脚本">
-                <el-select v-model="row.scriptID" placeholder="请选择脚本" style="width: 100%">
+              <el-form-item label="步骤名称" required>
+                <el-input v-model="row.stepName" @change="syncJsonFromRows(stepRows)" />
+              </el-form-item>
+            </el-col>
+            <el-col :xs="24" :md="12">
+              <el-form-item label="脚本定义" required>
+                <el-select
+                  v-model="row.scriptID"
+                  filterable
+                  placeholder="请选择脚本"
+                  style="width: 100%"
+                  @change="onStepScriptChange(row)"
+                >
                   <el-option
                     v-for="script in scripts"
                     :key="script.scriptID"
-                    :label="script.scriptName"
+                    :label="`${script.scriptName} (${script.scriptKey || 'no-key'})${script.isEnabled === false ? ' [停用]' : ''}`"
                     :value="script.scriptID"
                   />
                 </el-select>
               </el-form-item>
             </el-col>
+          </el-row>
+
+          <el-row :gutter="10">
             <el-col :xs="24" :md="12">
-              <el-form-item label="脚本版本ID">
-                <el-input-number v-model="row.scriptVersionID" :min="1" style="width: 100%" />
+              <el-form-item label="版本策略">
+                <el-radio-group v-model="row.versionMode" size="small" @change="onStepVersionModeChange(row)">
+                  <el-radio-button label="active">跟随激活版本</el-radio-button>
+                  <el-radio-button label="fixed">锁定版本</el-radio-button>
+                </el-radio-group>
+              </el-form-item>
+            </el-col>
+            <el-col :xs="24" :md="12" v-if="row.versionMode === 'fixed'">
+              <el-form-item label="锁定版本" required>
+                <el-select
+                  v-model="row.scriptVersionID"
+                  filterable
+                  clearable
+                  :loading="isVersionListLoading(row.scriptID)"
+                  placeholder="请选择脚本版本"
+                  style="width: 100%"
+                  @visible-change="(visible) => visible && ensureVersionsLoaded(row.scriptID)"
+                  @change="syncJsonFromRows(stepRows)"
+                >
+                  <el-option
+                    v-for="version in getVersionsForScript(row.scriptID)"
+                    :key="version.versionID"
+                    :label="formatVersionOption(version)"
+                    :value="version.versionID"
+                  />
+                </el-select>
               </el-form-item>
             </el-col>
           </el-row>
 
+          <el-alert type="info" :closable="false" class="step-exec-path">
+            {{ resolveStepVersionLabel(row) }}；执行文件路径：{{ resolveStepExecutionPath(row) }}
+          </el-alert>
+
           <el-row :gutter="10">
             <el-col :xs="24" :md="8">
               <el-form-item label="失败策略">
-                <el-select v-model="row.failureStrategy" style="width: 100%">
+                <el-select v-model="row.failureStrategy" style="width: 100%" @change="syncJsonFromRows(stepRows)">
                   <el-option
                     v-for="item in failureStrategyOptions"
                     :key="item.value"
@@ -1085,32 +1059,46 @@ onMounted(async () => {
             </el-col>
             <el-col :xs="24" :md="8">
               <el-form-item label="超时(ms)">
-                <el-input-number v-model="row.timeoutMs" :min="1" :step="100" style="width: 100%" />
+                <el-input-number v-model="row.timeoutMs" :min="1" :step="100" style="width: 100%" @change="syncJsonFromRows(stepRows)" />
               </el-form-item>
             </el-col>
             <el-col :xs="24" :md="8">
               <el-form-item label="启用状态">
-                <el-switch v-model="row.isEnabled" />
+                <el-switch v-model="row.isEnabled" @change="syncJsonFromRows(stepRows)" />
               </el-form-item>
             </el-col>
           </el-row>
 
-          <el-form-item label="输入模板(JSON 对象)">
-            <el-input v-model="row.inputTemplateText" type="textarea" :rows="4" />
+          <el-form-item label="脚本运行参数(JSON 对象，可留空 {})">
+            <el-input
+              v-model="row.inputTemplateText"
+              type="textarea"
+              :rows="4"
+              placeholder='例如字数统计脚本可留空 {}; 或 {"savedPathField":"savedPath","patchKey":"word_count"}'
+              @change="syncJsonFromRows(stepRows)"
+            />
+            <div class="field-help">
+              这里填写的是 <code>context.stepInput</code>。不要把 payload 填在这里。字数统计脚本默认不需要参数，直接留空 <code>{}</code> 即可。
+            </div>
           </el-form-item>
         </article>
-
-        <el-button plain type="primary" @click="addStepRow">新增步骤</el-button>
       </div>
 
-      <el-input
-        v-else
-        v-model="stepEditorText"
-        type="textarea"
-        :rows="20"
-        class="editor-area"
-        v-loading="stepLoading"
-      />
+      <el-collapse v-model="advancedJsonOpen" class="advanced-json">
+        <el-collapse-item name="json">
+          <template #title>高级 JSON 编辑（可选）</template>
+          <el-alert type="warning" :closable="false" show-icon>
+            仅用于批量修改。建议先点击“从卡片生成 JSON”，修改后再点击“应用到卡片”。
+          </el-alert>
+
+          <el-input v-model="stepEditorText" type="textarea" :rows="14" class="editor-area" />
+
+          <div class="json-actions">
+            <el-button @click="refreshJsonFromRows">从卡片生成 JSON</el-button>
+            <el-button type="primary" @click="applyJsonToRows">应用到卡片</el-button>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
 
       <div class="drawer-footer">
         <el-button @click="stepDrawerVisible = false">关闭</el-button>
@@ -1121,47 +1109,24 @@ onMounted(async () => {
     <el-drawer
       v-model="mountDrawerVisible"
       size="840px"
-      :title="`挂载管理 - ${currentMountFlow?.flowName || '未命名流程'}`"
+      :title="`挂载配置 - ${currentMountFlow?.flowName || '未命名流程'}`"
     >
       <el-alert type="info" :closable="false" show-icon>
-        scope 表示执行域（submission/system/judge），targetType 表示作用范围（global/contest/track）。
+        挂载由两部分组成：触发上下文(scope/eventKey) 与作用范围(targetType/targetID)。
       </el-alert>
 
       <div class="mount-form">
+        <h4 class="section-title">触发上下文</h4>
         <el-form label-position="top">
           <el-row :gutter="10">
-            <el-col :xs="24" :md="6">
+            <el-col :xs="24" :md="8">
               <el-form-item label="执行域(scope)">
                 <el-select v-model="mountForm.scope" style="width: 100%" @change="onMountScopeChange">
                   <el-option v-for="item in mountScopeOptions" :key="item.value" :label="item.label" :value="item.value" />
                 </el-select>
               </el-form-item>
             </el-col>
-            <el-col :xs="24" :md="6">
-              <el-form-item label="目标范围(targetType)">
-                <el-select v-model="mountForm.targetType" style="width: 100%" @change="onMountTargetTypeChange">
-                  <el-option v-for="item in targetTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
-                </el-select>
-              </el-form-item>
-            </el-col>
-            <el-col :xs="24" :md="6">
-              <el-form-item label="目标ID(targetID)">
-                <el-input
-                  v-model="mountForm.targetIDText"
-                  :disabled="mountForm.targetType === 'global'"
-                  placeholder="targetType 非 global 时需填正整数"
-                />
-              </el-form-item>
-            </el-col>
-            <el-col :xs="24" :md="6">
-              <el-form-item label="启用状态">
-                <el-switch v-model="mountForm.isEnabled" />
-              </el-form-item>
-            </el-col>
-          </el-row>
-
-          <el-row :gutter="10">
-            <el-col :xs="24" :md="18">
+            <el-col :xs="24" :md="10">
               <el-form-item label="事件键(eventKey)">
                 <el-select
                   v-model="mountForm.eventKey"
@@ -1175,13 +1140,42 @@ onMounted(async () => {
                 </el-select>
               </el-form-item>
             </el-col>
-            <el-col :xs="24" :md="6" class="mount-action-col">
+            <el-col :xs="24" :md="6">
+              <el-form-item label="启用状态">
+                <el-switch v-model="mountForm.isEnabled" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+
+          <h4 class="section-title">作用范围</h4>
+          <el-row :gutter="10">
+            <el-col :xs="24" :md="8">
+              <el-form-item label="目标范围(targetType)">
+                <el-select v-model="mountForm.targetType" style="width: 100%" @change="onMountTargetTypeChange">
+                  <el-option v-for="item in targetTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :xs="24" :md="8">
+              <el-form-item label="目标ID(targetID)">
+                <el-input
+                  v-model="mountForm.targetIDText"
+                  :disabled="mountForm.targetType === 'global'"
+                  placeholder="targetType 非 global 时需填正整数"
+                />
+              </el-form-item>
+            </el-col>
+            <el-col :xs="24" :md="8" class="mount-action-col">
               <el-form-item label="操作">
                 <el-button type="primary" style="width: 100%" @click="addMount">新增挂载</el-button>
               </el-form-item>
             </el-col>
           </el-row>
         </el-form>
+
+        <el-alert type="success" :closable="false" class="mount-preview">
+          {{ mountPreviewText }}
+        </el-alert>
       </div>
 
       <el-table :data="mounts" v-loading="mountLoading" style="width: 100%">
@@ -1221,9 +1215,8 @@ onMounted(async () => {
     </el-drawer>
 
     <el-alert v-if="scripts.length === 0" type="warning" :closable="false" class="hint">
-      当前未发现可用脚本，建议先在脚本管理页创建脚本后再配置流程步骤。
+      当前未发现可用脚本，请先在脚本库创建脚本定义并上传版本。
     </el-alert>
-    </template>
   </section>
 </template>
 
@@ -1237,8 +1230,14 @@ onMounted(async () => {
   flex-wrap: wrap;
 }
 
-.step-mode-bar {
+.step-toolbar {
   margin: 12px 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.runtime-input-hint {
+  margin-top: 10px;
 }
 
 .step-form-list {
@@ -1255,6 +1254,18 @@ onMounted(async () => {
   background: #fff;
 }
 
+.step-row-card.is-dragging {
+  opacity: 0.65;
+  border-color: #409eff;
+}
+
+.field-help {
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
+  margin-top: 6px;
+}
+
 .step-row-head {
   display: flex;
   justify-content: space-between;
@@ -1262,8 +1273,36 @@ onMounted(async () => {
   margin-bottom: 6px;
 }
 
+.step-row-head-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.drag-handle {
+  color: #9ca3af;
+  user-select: none;
+  cursor: move;
+  font-weight: bold;
+}
+
+.step-exec-path {
+  margin-bottom: 12px;
+}
+
+.advanced-json {
+  margin-top: 12px;
+}
+
 .editor-area {
   margin-top: 12px;
+}
+
+.json-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .drawer-footer {
@@ -1277,9 +1316,19 @@ onMounted(async () => {
   margin: 12px 0;
 }
 
+.section-title {
+  margin: 8px 0;
+  font-size: 14px;
+  color: #111827;
+}
+
 .mount-action-col {
   display: flex;
   align-items: flex-end;
+}
+
+.mount-preview {
+  margin: 8px 0 12px;
 }
 
 .hint {

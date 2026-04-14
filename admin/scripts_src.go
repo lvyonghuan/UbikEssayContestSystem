@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/lvyonghuan/Ubik-Util/uerr"
+	"gorm.io/gorm"
 )
 
 var (
@@ -62,6 +63,11 @@ var (
 	}
 )
 
+const (
+	contestEndBuiltinRegenerateScriptKeyForMount = "contest_end_regenerate_review_results_builtin"
+	contestEndBuiltinExportPDFScriptKeyForMount  = "contest_end_export_track_pdfs_builtin"
+)
+
 func scriptSrcWarn(message string) {
 	if log.Logger != nil {
 		log.Logger.Warn(message)
@@ -78,6 +84,22 @@ func scriptSrcExtractError(err error) error {
 	parsedErr := uerr.ExtractError(err)
 	scriptSrcWarn("Script src error: " + parsedErr.Error())
 	return parsedErr
+}
+
+func isScriptSrcRecordNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return true
+	}
+
+	parsedErr := uerr.ExtractError(err)
+	if errors.Is(parsedErr, gorm.ErrRecordNotFound) {
+		return true
+	}
+
+	return strings.Contains(strings.ToLower(parsedErr.Error()), "record not found")
 }
 
 func createScriptDefinitionSrc(adminID int, def *model.ScriptDefinition) error {
@@ -337,11 +359,17 @@ func replaceFlowStepsSrc(adminID int, flowID int, steps []model.FlowStep) error 
 			steps[i].TimeoutMs = 5000
 		}
 		if _, err := getScriptDefinitionByIDFn(steps[i].ScriptID); err != nil {
+			if isScriptSrcRecordNotFound(err) {
+				return newScriptSrcError("script does not exist")
+			}
 			return scriptSrcExtractError(err)
 		}
 		if steps[i].ScriptVersionID > 0 {
 			version, err := getScriptVersionByIDFn(steps[i].ScriptVersionID)
 			if err != nil {
+				if isScriptSrcRecordNotFound(err) {
+					return newScriptSrcError("script version does not exist")
+				}
 				return scriptSrcExtractError(err)
 			}
 			if version.ScriptID != steps[i].ScriptID {
@@ -386,6 +414,9 @@ func createFlowMountSrc(adminID int, mount *model.FlowMount) error {
 	if _, err := getScriptFlowByIDFn(mount.FlowID); err != nil {
 		return scriptSrcExtractError(err)
 	}
+	if err := validateFlowMountBuiltinScope(mount); err != nil {
+		return err
+	}
 
 	err := createFlowMountFn(mount)
 	if err != nil {
@@ -416,6 +447,66 @@ func listFlowMountsByFlowSrc(flowID int) ([]model.FlowMount, error) {
 		return nil, scriptSrcExtractError(err)
 	}
 	return mounts, nil
+}
+
+func validateFlowMountBuiltinScope(mount *model.FlowMount) error {
+	steps, err := listFlowStepsFn(mount.FlowID)
+	if err != nil {
+		return scriptSrcExtractError(err)
+	}
+
+	for _, step := range steps {
+		if step.ScriptID <= 0 {
+			continue
+		}
+
+		scriptDef, getDefErr := getScriptDefinitionByIDFn(step.ScriptID)
+		if getDefErr != nil {
+			if isScriptSrcRecordNotFound(getDefErr) {
+				return newScriptSrcError("script does not exist")
+			}
+			return scriptSrcExtractError(getDefErr)
+		}
+
+		if strings.TrimSpace(scriptDef.Interpreter) != scriptflow.InterpreterBuiltinGo {
+			continue
+		}
+
+		isContestEndBuiltin := isContestEndBuiltinScriptKeyForMount(scriptDef.ScriptKey)
+		if !isContestEndBuiltin && step.ScriptVersionID > 0 {
+			version, versionErr := getScriptVersionByIDFn(step.ScriptVersionID)
+			if versionErr != nil {
+				if isScriptSrcRecordNotFound(versionErr) {
+					return newScriptSrcError("script version does not exist")
+				}
+				return scriptSrcExtractError(versionErr)
+			}
+
+			relativePath := filepath.ToSlash(strings.TrimSpace(version.RelativePath))
+			if strings.HasPrefix(relativePath, "builtin/contest_end/") {
+				isContestEndBuiltin = true
+			}
+		}
+
+		if !isContestEndBuiltin {
+			continue
+		}
+
+		if mount.Scope != scriptflow.ScopeSystem || mount.EventKey != scriptflow.EventContestEnd {
+			return newScriptSrcError("contest_end builtin steps can only be mounted to system/contest_end")
+		}
+	}
+
+	return nil
+}
+
+func isContestEndBuiltinScriptKeyForMount(scriptKey string) bool {
+	switch strings.TrimSpace(scriptKey) {
+	case contestEndBuiltinRegenerateScriptKeyForMount, contestEndBuiltinExportPDFScriptKeyForMount:
+		return true
+	default:
+		return false
+	}
 }
 
 func validateScriptDefinition(def *model.ScriptDefinition) error {

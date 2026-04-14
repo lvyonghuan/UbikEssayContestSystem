@@ -646,3 +646,31 @@ func TestDeleteSubmissionSrcWithHookSuccess(t *testing.T) {
 		t.Fatalf("deleteSubmissionSrc should succeed, got %v", err)
 	}
 }
+
+func TestRunTrackHookRejectsBuiltinGoStepsInSubmissionScope(t *testing.T) {
+	setupSubmissionRouteMocks(t)
+
+	resolveFlowForExecutionFn = func(scope string, eventKey string, targetType string, targetID int) (model.ScriptFlow, []pgsql.ResolvedFlowStep, error) {
+		return model.ScriptFlow{FlowID: 1, FlowKey: "flow"}, []pgsql.ResolvedFlowStep{{
+			Step: model.FlowStep{StepID: 1, StepName: "builtin_step", TimeoutMs: 1000, FailureStrategy: "fail_close", IsEnabled: true},
+			Script: model.ScriptDefinition{
+				ScriptID:    1,
+				ScriptKey:   "contest_end_regenerate_review_results_builtin",
+				Interpreter: scriptflow.InterpreterBuiltinGo,
+				IsEnabled:   true,
+			},
+			Version: model.ScriptVersion{VersionID: 1, ScriptID: 1, RelativePath: "builtin/contest_end/regenerate_review_results", IsActive: true},
+		}}, nil
+	}
+
+	result, err := runTrackHook(scriptflow.ScopeSubmission, scriptflow.EventFilePost, 1, map[string]any{"workID": 1})
+	if err == nil {
+		t.Fatal("expected builtin_go step rejection in submission scope")
+	}
+	if !strings.Contains(err.Error(), "interpreter is not allowed: builtin_go") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Allowed {
+		t.Fatalf("expected blocked result, got %+v", result)
+	}
+}

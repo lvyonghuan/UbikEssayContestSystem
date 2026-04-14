@@ -16,6 +16,8 @@ CJK = re.compile(
 
 WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 WORD_DOCUMENT_XML = "word/document.xml"
+DEFAULT_SAVED_PATH_FIELD = "savedPath"
+DEFAULT_PATCH_KEY = "word_count"
 
 
 def emit(payload: dict) -> None:
@@ -33,18 +35,39 @@ def parse_execute_input(raw: str) -> dict:
     return data
 
 
-def resolve_saved_docx_path(data: dict) -> str:
+def parse_step_input(data: dict) -> dict:
+    context = data.get("context")
+    if not isinstance(context, dict):
+        return {}
+
+    step_input = context.get("stepInput")
+    if not isinstance(step_input, dict):
+        return {}
+
+    return step_input
+
+
+def read_step_option(step_input: dict, key: str, default: str) -> str:
+    value = step_input.get(key)
+    if not isinstance(value, str):
+        return default
+
+    normalized = value.strip()
+    return normalized if normalized else default
+
+
+def resolve_saved_docx_path(data: dict, saved_path_field: str) -> str:
     payload = data.get("payload")
     if not isinstance(payload, dict):
         raise ValueError("payload is required")
 
-    saved_path = payload.get("savedPath")
+    saved_path = payload.get(saved_path_field)
     if not isinstance(saved_path, str) or not saved_path.strip():
-        raise ValueError("payload.savedPath is required")
+        raise ValueError(f"payload.{saved_path_field} is required")
 
     normalized = os.path.normpath(saved_path.strip())
     if not normalized.lower().endswith(".docx"):
-        raise ValueError("payload.savedPath must point to a .docx file")
+        raise ValueError(f"payload.{saved_path_field} must point to a .docx file")
 
     if not os.path.isabs(normalized):
         normalized = os.path.normpath(os.path.join(os.getcwd(), normalized))
@@ -112,14 +135,28 @@ def main() -> int:
 
     try:
         data = parse_execute_input(raw)
-        docx_path = resolve_saved_docx_path(data)
+        step_input = parse_step_input(data)
+        saved_path_field = read_step_option(step_input, "savedPathField", DEFAULT_SAVED_PATH_FIELD)
+        patch_key = read_step_option(step_input, "patchKey", DEFAULT_PATCH_KEY)
+
+        docx_path = resolve_saved_docx_path(data, saved_path_field)
         text = extract_docx_text(docx_path)
         word_count = count_words_word_style(text)
     except Exception as exc:
         block(str(exc))
         return 0
 
-    emit({"allow": True, "patch": {"word_count": int(word_count)}})
+    emit(
+        {
+            "allow": True,
+            "patch": {patch_key: int(word_count)},
+            "metrics": {
+                "savedPathField": saved_path_field,
+                "patchKey": patch_key,
+                "wordCount": int(word_count),
+            },
+        }
+    )
     return 0
 
 

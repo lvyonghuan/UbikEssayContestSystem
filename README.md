@@ -26,19 +26,19 @@
 - 限制投稿数脚本: scripts/submission_hooks/limit_three_submissions.py
 	- 事件: submission/submission_pre
 	- 规则: 同一作者在同一比赛维度达到上限后拒绝投稿
-- 字数统计脚本: scripts/submission_hooks/count_docx_words.py
+- 字数统计脚本: scripts/word_num_count/v1/count_docx_words.py
 	- 事件: submission/file_post
 	- 规则: 读取已保存 docx 内容，统计字数后写入 work_infos.word_count
 	- 依赖: 运行脚本的 Python 环境需安装 PyICU
 
 ### 字数统计脚本挂载说明
 
-`scripts/submission_hooks/count_docx_words.py` 仅提供脚本实现，不会在系统启动时自动创建默认挂载。
+`scripts/word_num_count/v1/count_docx_words.py` 仅提供脚本实现，不会在系统启动时自动创建默认挂载。
 
 管理员可通过脚本流配置将该脚本挂载到 `submission/file_post`：
 
 1. 创建脚本定义（interpreter=`python`）
-2. 上传脚本版本（文件路径使用 `scripts/submission_hooks/count_docx_words.py`）
+2. 上传脚本版本（文件路径使用 `scripts/word_num_count/v1/count_docx_words.py`）
 3. 创建脚本流（例如 `file_post_word_count`）
 4. 为脚本流添加步骤，建议 `failureStrategy=fail_close`
 5. 创建挂载：`scope=submission`，`eventKey=file_post`，`targetType=track` 或 `global`
@@ -52,6 +52,59 @@
 脚本输出 JSON 中的 patch 仅写入：
 
 - `word_count` -> `works.work_infos.word_count`
+
+### 脚本执行输入结构（重点）
+
+每一步脚本收到的 stdin JSON 结构固定如下：
+
+```json
+{
+	"scope": "submission",
+	"eventKey": "file_post",
+	"flowKey": "file_post_word_count",
+	"traceID": "...",
+	"nowUnix": 1710000000,
+	"context": {
+		"trackID": 1,
+		"stepInput": {}
+	},
+	"payload": {
+		"savedPath": "files/submissions/1/2/3.docx",
+		"workID": 3,
+		"authorID": 2,
+		"trackID": 1,
+		"fileHash": "...",
+		"fileSize": 12345
+	}
+}
+```
+
+说明：
+
+- 流程页“脚本运行参数(JSON)”对应 `context.stepInput`
+- `payload` 由事件自动提供，不需要在“脚本运行参数”里手填
+
+### 字数统计脚本参数（count_docx_words.py）
+
+默认情况下可直接留空：
+
+```json
+{}
+```
+
+可选参数（写在 `context.stepInput`）：
+
+- `savedPathField`：从 `payload` 读取 docx 路径的字段名，默认 `savedPath`
+- `patchKey`：统计结果写入 patch 的字段名，默认 `word_count`
+
+示例：
+
+```json
+{
+	"savedPathField": "savedPath",
+	"patchKey": "word_count"
+}
+```
 
 ### 场景覆盖
 

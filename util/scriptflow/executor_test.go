@@ -168,3 +168,32 @@ func TestExecuteChainBuiltinStepMissingHandler(t *testing.T) {
 		t.Fatal("result should be blocked when builtin handler is missing")
 	}
 }
+
+func TestShouldTryWindowsPythonFallback(t *testing.T) {
+	if !shouldTryWindowsPythonFallback("windows", "python3", "") {
+		t.Fatal("expected fallback for windows python3 with empty stderr")
+	}
+	if shouldTryWindowsPythonFallback("windows", "python3", "traceback") {
+		t.Fatal("should not fallback when stderr contains script error output")
+	}
+	if shouldTryWindowsPythonFallback("windows", "python", "") {
+		t.Fatal("should only fallback from python3")
+	}
+	if shouldTryWindowsPythonFallback("linux", "python3", "") {
+		t.Fatal("should not fallback on non-windows")
+	}
+}
+
+func TestFallbackInterpretersFor(t *testing.T) {
+	got := fallbackInterpretersFor("windows", "python3")
+	if len(got) != 2 || got[0] != "python" || got[1] != "py" {
+		t.Fatalf("unexpected fallback list: %+v", got)
+	}
+
+	if got = fallbackInterpretersFor("windows", "python"); len(got) != 0 {
+		t.Fatalf("unexpected fallback list for python: %+v", got)
+	}
+	if got = fallbackInterpretersFor("linux", "python3"); len(got) != 0 {
+		t.Fatalf("unexpected fallback list for linux: %+v", got)
+	}
+}

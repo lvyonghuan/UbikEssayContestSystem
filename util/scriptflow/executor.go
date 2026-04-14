@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -210,18 +211,24 @@ func (e *Executor) executeStep(ctx context.Context, step StepConfig, input Execu
 		return stepResult, ExecuteOutput{}, uerr.NewError(err)
 	}
 
-	cmd := exec.CommandContext(stepCtx, interpreter, scriptPath)
-	cmd.Stdin = bytes.NewReader(stdinData)
+	stdoutText, stderrText, runErr := runExternalStepCommand(stepCtx, interpreter, scriptPath, stdinData)
+	if runErr != nil && shouldTryWindowsPythonFallback(runtime.GOOS, interpreter, stderrText) {
+		for _, fallbackInterpreter := range fallbackInterpretersFor(runtime.GOOS, interpreter) {
+			if len(e.allowedInterpreters) > 0 {
+				if _, ok := e.allowedInterpreters[fallbackInterpreter]; !ok {
+					continue
+				}
+			}
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	runErr := cmd.Run()
+			stdoutText, stderrText, runErr = runExternalStepCommand(stepCtx, fallbackInterpreter, scriptPath, stdinData)
+			if runErr == nil {
+				break
+			}
+		}
+	}
 	stepResult.DurationMs = time.Since(started).Milliseconds()
 	if runErr != nil {
-		msg := strings.TrimSpace(stderr.String())
+		msg := strings.TrimSpace(stderrText)
 		if msg == "" {
 			msg = runErr.Error()
 		}
@@ -229,7 +236,7 @@ func (e *Executor) executeStep(ctx context.Context, step StepConfig, input Execu
 		return stepResult, ExecuteOutput{}, uerr.NewError(errors.New(msg))
 	}
 
-	output, err := parseOutput(stdout.String())
+	output, err := parseOutput(stdoutText)
 	if err != nil {
 		stepResult.Message = err.Error()
 		return stepResult, ExecuteOutput{}, err
@@ -346,4 +353,38 @@ func mergePatch(dst map[string]any, src map[string]any) {
 	for k, v := range src {
 		dst[k] = v
 	}
+}
+
+func runExternalStepCommand(ctx context.Context, interpreter string, scriptPath string, stdinData []byte) (string, string, error) {
+	cmd := exec.CommandContext(ctx, interpreter, scriptPath)
+	cmd.Stdin = bytes.NewReader(stdinData)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+func shouldTryWindowsPythonFallback(goos string, interpreter string, stderrText string) bool {
+	if goos != "windows" {
+		return false
+	}
+	if strings.TrimSpace(interpreter) != "python3" {
+		return false
+	}
+
+	// python3 on Windows can be an app alias launcher; when it fails to launch,
+	// stderr is usually empty while process exits with a non-zero code.
+	return strings.TrimSpace(stderrText) == ""
+}
+
+func fallbackInterpretersFor(goos string, interpreter string) []string {
+	if goos == "windows" && strings.TrimSpace(interpreter) == "python3" {
+		return []string{"python", "py"}
+	}
+
+	return nil
 }

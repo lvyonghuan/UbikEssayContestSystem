@@ -3,12 +3,21 @@ package pgsql
 import (
 	"errors"
 	"main/model"
+	"strings"
 
 	"github.com/lvyonghuan/Ubik-Util/uerr"
 	"gorm.io/gorm"
 )
 
 var ErrFlowNotMounted = errors.New("script flow not mounted")
+
+const (
+	interpreterBuiltinGoForFlowResolve             = "builtin_go"
+	flowResolveScopeSystem                         = "system"
+	flowResolveEventContestEnd                     = "contest_end"
+	contestEndBuiltinRegenerateScriptKeyForResolve = "contest_end_regenerate_review_results_builtin"
+	contestEndBuiltinExportPDFScriptKeyForResolve  = "contest_end_export_track_pdfs_builtin"
+)
 
 type ResolvedFlowStep struct {
 	Step    model.FlowStep         `json:"step"`
@@ -259,7 +268,12 @@ func ReplaceFlowSteps(flowID int, steps []model.FlowStep) error {
 			steps[i].IsEnabled = true
 		}
 
-		err = tx.Create(&steps[i]).Error
+		if steps[i].ScriptVersionID > 0 {
+			err = tx.Create(&steps[i]).Error
+		} else {
+			// ScriptVersionID is optional; omit zero value to persist NULL instead of 0.
+			err = tx.Omit("ScriptVersionID").Create(&steps[i]).Error
+		}
 		if err != nil {
 			tx.Rollback()
 			return uerr.NewError(err)
@@ -346,7 +360,7 @@ func ResolveFlowForExecution(scope string, eventKey string, targetType string, t
 		return model.ScriptFlow{}, nil, err
 	}
 
-	return resolveFlowByID(mount.FlowID)
+	return resolveFlowByIDForExecution(mount.FlowID, scope, eventKey)
 }
 
 func ResolveFlowChainForExecution(scope string, eventKey string, contestID int, trackID int) ([]ResolvedFlowChain, error) {
@@ -380,7 +394,7 @@ func ResolveFlowChainForExecution(scope string, eventKey string, contestID int, 
 			return nil, err
 		}
 
-		flow, steps, err := resolveFlowByID(mount.FlowID)
+		flow, steps, err := resolveFlowByIDForExecution(mount.FlowID, scope, eventKey)
 		if err != nil {
 			return nil, err
 		}
@@ -401,6 +415,10 @@ func ResolveFlowChainForExecution(scope string, eventKey string, contestID int, 
 }
 
 func resolveFlowByID(flowID int) (model.ScriptFlow, []ResolvedFlowStep, error) {
+	return resolveFlowByIDForExecution(flowID, "", "")
+}
+
+func resolveFlowByIDForExecution(flowID int, scope string, eventKey string) (model.ScriptFlow, []ResolvedFlowStep, error) {
 	var flow model.ScriptFlow
 	err := postgresDB.Where("flow_id = ? AND is_enabled = ?", flowID, true).First(&flow).Error
 	if err != nil {
@@ -423,6 +441,9 @@ func resolveFlowByID(flowID int) (model.ScriptFlow, []ResolvedFlowStep, error) {
 		scriptDef, getDefErr := GetScriptDefinitionByID(step.ScriptID)
 		if getDefErr != nil {
 			return model.ScriptFlow{}, nil, getDefErr
+		}
+		if shouldSkipStepForScope(scriptDef, scope, eventKey) {
+			continue
 		}
 		if !scriptDef.IsEnabled {
 			return model.ScriptFlow{}, nil, uerr.NewError(errors.New("script is disabled: " + scriptDef.ScriptKey))
@@ -452,6 +473,31 @@ func resolveFlowByID(flowID int) (model.ScriptFlow, []ResolvedFlowStep, error) {
 	}
 
 	return flow, resolvedSteps, nil
+}
+
+func shouldSkipStepForScope(scriptDef model.ScriptDefinition, scope string, eventKey string) bool {
+	if strings.TrimSpace(scope) == "" && strings.TrimSpace(eventKey) == "" {
+		return false
+	}
+
+	if strings.TrimSpace(scriptDef.Interpreter) != interpreterBuiltinGoForFlowResolve {
+		return false
+	}
+
+	if !isContestEndBuiltinScriptKeyForResolve(scriptDef.ScriptKey) {
+		return false
+	}
+
+	return strings.TrimSpace(scope) != flowResolveScopeSystem || strings.TrimSpace(eventKey) != flowResolveEventContestEnd
+}
+
+func isContestEndBuiltinScriptKeyForResolve(scriptKey string) bool {
+	switch strings.TrimSpace(scriptKey) {
+	case contestEndBuiltinRegenerateScriptKeyForResolve, contestEndBuiltinExportPDFScriptKeyForResolve:
+		return true
+	default:
+		return false
+	}
 }
 
 func findMountedFlow(scope string, eventKey string, targetType string, targetID int) (model.FlowMount, error) {
