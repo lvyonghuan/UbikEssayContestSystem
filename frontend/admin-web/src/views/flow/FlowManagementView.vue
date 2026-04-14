@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
+  buildSubmissionWordCountPreset,
   createFlowMount,
   createScriptFlow,
   fetchFlowMounts,
@@ -12,16 +13,58 @@ import {
   updateScriptFlow,
   updateScriptFlowStatus,
 } from '@/services/repositories/scriptFlowRepository'
-import { fetchScriptDefinitions } from '@/services/repositories/scriptRepository'
+import { fetchScriptDefinitions, fetchScriptVersions } from '@/services/repositories/scriptRepository'
 import type {
   FlowMount,
   FlowMountScope,
+  FlowMountTargetType,
   FlowStep,
   ScriptDefinition,
   ScriptFlow,
+  ScriptVersion,
 } from '@/types/api'
 
 type StepEditorMode = 'form' | 'json'
+type FlowManageMode = 'guided' | 'expert'
+type FailureStrategy = 'fail_close' | 'fail_open' | 'retry'
+
+const flowKeyPattern = /^[a-zA-Z0-9_-]+$/
+
+const eventKeyOptions = [
+  'submission_pre',
+  'submission_update_pre',
+  'submission_delete_pre',
+  'file_pre',
+  'file_post',
+  'contest_end',
+]
+
+const scopeEventMap: Record<FlowMountScope, string[]> = {
+  submission: ['submission_pre', 'submission_update_pre', 'submission_delete_pre', 'file_pre', 'file_post'],
+  system: ['contest_end'],
+  judge: [],
+}
+
+const eventKeyLabelMap: Record<string, string> = {
+  submission_pre: '投稿前',
+  submission_update_pre: '投稿更新前',
+  submission_delete_pre: '投稿删除前',
+  file_pre: '文件上传前',
+  file_post: '文件上传后',
+  contest_end: '比赛结束',
+}
+
+const scopeLabelMap: Record<FlowMountScope, string> = {
+  submission: '投稿域',
+  system: '系统域',
+  judge: '评审域',
+}
+
+const targetTypeLabelMap: Record<FlowMountTargetType, string> = {
+  global: '全局',
+  contest: '比赛',
+  track: '赛道',
+}
 
 interface StepRowForm {
   stepID?: number
@@ -30,14 +73,31 @@ interface StepRowForm {
   scriptID?: number
   scriptVersionID?: number
   isEnabled: boolean
-  failureStrategy: string
+  failureStrategy: FailureStrategy | string
   timeoutMs: number
   inputTemplateText: string
 }
 
+const manageMode = ref<FlowManageMode>('guided')
 const loading = ref(false)
 const flows = ref<ScriptFlow[]>([])
 const scripts = ref<ScriptDefinition[]>([])
+
+const guidedSubmitting = ref(false)
+const guidedVersionLoading = ref(false)
+const guidedVersions = ref<ScriptVersion[]>([])
+const guidedForm = reactive({
+  scriptID: undefined as number | undefined,
+  scriptVersionID: undefined as number | undefined,
+  flowName: '投稿后字数统计',
+  flowKey: '',
+  scope: 'submission' as FlowMountScope,
+  eventKey: 'file_post',
+  targetType: 'track' as FlowMountTargetType,
+  targetIDText: '',
+  timeoutMs: 20000,
+  failureStrategy: 'fail_close' as FailureStrategy,
+})
 
 const flowDialogVisible = ref(false)
 const editingFlowId = ref<number | null>(null)
@@ -45,8 +105,8 @@ const flowForm = reactive({
   flowName: '',
   flowKey: '',
   flowDescription: '',
-  triggerEvent: '',
-  metaText: '{\n  "trigger": "work_created"\n}',
+  triggerEvent: 'file_post',
+  metaText: '{\n  "trigger": "file_post"\n}',
 })
 
 const stepDrawerVisible = ref(false)
@@ -62,40 +122,34 @@ const mountLoading = ref(false)
 const mounts = ref<FlowMount[]>([])
 const currentMountFlow = ref<ScriptFlow | null>(null)
 const mountForm = reactive({
-  scope: 'track' as FlowMountScope,
-  targetType: 'track',
+  scope: 'submission' as FlowMountScope,
+  targetType: 'track' as FlowMountTargetType,
   targetIDText: '',
-  eventKey: 'work_created',
+  eventKey: 'file_post',
   isEnabled: true,
 })
 
-const eventKeyOptions = [
-  'work_created',
-  'work_submitted',
-  'review_assigned',
-  'review_completed',
-]
-
 const failureStrategyOptions = [
-  { label: '继续后续步骤', value: 'CONTINUE' },
-  { label: '立即终止流程', value: 'STOP' },
-  { label: '按策略重试', value: 'RETRY' },
+  { label: '失败即阻断(推荐)', value: 'fail_close' as FailureStrategy },
+  { label: '失败放行', value: 'fail_open' as FailureStrategy },
+  { label: '失败重试', value: 'retry' as FailureStrategy },
 ]
 
 const mountScopeOptions = [
-  { label: '全局', value: 'global' as FlowMountScope },
-  { label: '比赛', value: 'contest' as FlowMountScope },
-  { label: '赛道', value: 'track' as FlowMountScope },
+  { label: '投稿域', value: 'submission' as FlowMountScope },
+  { label: '系统域', value: 'system' as FlowMountScope },
+  { label: '评审域', value: 'judge' as FlowMountScope },
 ]
 
-const targetTypeOptions = computed(() => {
-  if (mountForm.scope === 'global') {
-    return [{ label: '全局', value: 'global' }]
-  }
-  if (mountForm.scope === 'contest') {
-    return [{ label: '比赛', value: 'contest' }]
-  }
-  return [{ label: '赛道', value: 'track' }]
+const targetTypeOptions = [
+  { label: '全局', value: 'global' as FlowMountTargetType },
+  { label: '比赛', value: 'contest' as FlowMountTargetType },
+  { label: '赛道', value: 'track' as FlowMountTargetType },
+]
+
+const mountEventOptions = computed(() => {
+  const options = scopeEventMap[mountForm.scope] || []
+  return options.length > 0 ? options : eventKeyOptions
 })
 
 function parseJsonObject(text: string, errorMessage: string) {
@@ -120,17 +174,50 @@ function normalizeFlowMeta(flow: ScriptFlow) {
 }
 
 function detectFlowTrigger(flow: ScriptFlow | null) {
+  const fallback = 'file_post'
   if (!flow) {
-    return 'work_created'
+    return fallback
   }
   const meta = normalizeFlowMeta(flow)
   if (typeof meta.trigger === 'string' && meta.trigger.trim()) {
-    return meta.trigger.trim()
+    const eventKey = meta.trigger.trim()
+    return eventKeyOptions.includes(eventKey) ? eventKey : fallback
   }
   if (typeof meta.eventKey === 'string' && meta.eventKey.trim()) {
-    return meta.eventKey.trim()
+    const eventKey = meta.eventKey.trim()
+    return eventKeyOptions.includes(eventKey) ? eventKey : fallback
   }
-  return 'work_created'
+  return fallback
+}
+
+function normalizeFailureStrategy(value: unknown): FailureStrategy {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (normalized === 'fail_open' || normalized === 'retry') {
+    return normalized
+  }
+  return 'fail_close'
+}
+
+function formatEventKey(eventKey: string | undefined) {
+  if (!eventKey || !eventKey.trim()) {
+    return '-'
+  }
+  const normalized = eventKey.trim()
+  return eventKeyLabelMap[normalized] ? `${eventKeyLabelMap[normalized]} (${normalized})` : normalized
+}
+
+function formatScope(scope: string | undefined) {
+  if (!scope) {
+    return '-'
+  }
+  return scopeLabelMap[scope as FlowMountScope] || scope
+}
+
+function formatTargetType(targetType: string | undefined) {
+  if (!targetType) {
+    return '-'
+  }
+  return targetTypeLabelMap[targetType as FlowMountTargetType] || targetType
 }
 
 function defaultStepRow(order: number): StepRowForm {
@@ -140,7 +227,7 @@ function defaultStepRow(order: number): StepRowForm {
     scriptID: scripts.value[0]?.scriptID,
     scriptVersionID: undefined,
     isEnabled: true,
-    failureStrategy: 'CONTINUE',
+    failureStrategy: 'fail_close',
     timeoutMs: 5000,
     inputTemplateText: '{\n}',
   }
@@ -155,7 +242,7 @@ function normalizeStepRow(step: FlowStep, index: number): StepRowForm {
     scriptID: step.scriptID,
     scriptVersionID: step.scriptVersionID,
     isEnabled: step.isEnabled ?? true,
-    failureStrategy: typeof step.failureStrategy === 'string' ? step.failureStrategy : 'CONTINUE',
+    failureStrategy: normalizeFailureStrategy(step.failureStrategy),
     timeoutMs: Number.isInteger(step.timeoutMs) && (step.timeoutMs as number) > 0 ? (step.timeoutMs as number) : 5000,
     inputTemplateText: JSON.stringify(inputTemplate, null, 2),
   }
@@ -171,6 +258,10 @@ function mapStepRowsToPayload(rows: StepRowForm[]) {
     }
     if (!row.scriptID) {
       ElMessage.warning(`第 ${index + 1} 行需要选择脚本`)
+      return null
+    }
+    if (!row.stepName.trim()) {
+      ElMessage.warning(`第 ${index + 1} 行需要填写步骤名称`)
       return null
     }
     if (!Number.isInteger(row.timeoutMs) || row.timeoutMs <= 0) {
@@ -193,7 +284,7 @@ function mapStepRowsToPayload(rows: StepRowForm[]) {
       scriptID: row.scriptID,
       scriptVersionID: row.scriptVersionID,
       isEnabled: row.isEnabled,
-      failureStrategy: row.failureStrategy,
+      failureStrategy: normalizeFailureStrategy(row.failureStrategy),
       timeoutMs: row.timeoutMs,
       inputTemplate,
       stepConfig: inputTemplate,
@@ -229,21 +320,12 @@ function syncJsonFromRows(rows: StepRowForm[]) {
   return true
 }
 
-function resolveScope(mount: FlowMount): FlowMountScope {
-  if (mount.scope === 'contest' || mount.scope === 'track' || mount.scope === 'global') {
-    return mount.scope
-  }
-  if (mount.targetType === 'contest' || mount.containerType === 'contest') {
-    return 'contest'
-  }
-  if (mount.targetType === 'track' || mount.containerType === 'track') {
-    return 'track'
-  }
-  return 'global'
+function resolveScope(mount: FlowMount): string {
+  return mount.scope || '-'
 }
 
 function resolveTargetType(mount: FlowMount) {
-  return mount.targetType || mount.containerType || (resolveScope(mount) === 'global' ? 'global' : resolveScope(mount))
+  return mount.targetType || mount.containerType || '-'
 }
 
 function resolveTargetID(mount: FlowMount) {
@@ -251,7 +333,7 @@ function resolveTargetID(mount: FlowMount) {
   if (typeof targetID === 'number') {
     return targetID
   }
-  return resolveScope(mount) === 'global' ? 0 : null
+  return resolveTargetType(mount) === 'global' ? 0 : null
 }
 
 function resetFlowForm() {
@@ -259,31 +341,195 @@ function resetFlowForm() {
     flowName: '',
     flowKey: '',
     flowDescription: '',
-    triggerEvent: 'work_created',
-    metaText: '{\n  "trigger": "work_created"\n}',
+    triggerEvent: 'file_post',
+    metaText: '{\n  "trigger": "file_post"\n}',
   })
 }
 
 function resetMountForm(flow: ScriptFlow | null) {
+  const triggerEvent = detectFlowTrigger(flow)
   Object.assign(mountForm, {
-    scope: 'track' as FlowMountScope,
-    targetType: 'track',
+    scope: 'submission' as FlowMountScope,
+    targetType: 'track' as FlowMountTargetType,
     targetIDText: '',
-    eventKey: detectFlowTrigger(flow),
+    eventKey: triggerEvent,
     isEnabled: true,
   })
+
+  syncMountEventWithScope()
+  syncTargetIDWithTargetType()
 }
 
-function syncTargetTypeWithScope() {
-  if (mountForm.scope === 'global') {
-    mountForm.targetType = 'global'
+function validateFlowKey(flowKey: string, fieldLabel: string) {
+  if (!flowKey.trim()) {
+    ElMessage.warning(`${fieldLabel}不能为空`) 
+    return false
+  }
+  if (!flowKeyPattern.test(flowKey.trim())) {
+    ElMessage.warning(`${fieldLabel}仅支持字母、数字、下划线和连字符`)
+    return false
+  }
+  return true
+}
+
+function generateGuidedFlowKey() {
+  const now = new Date()
+  const stamp = [
+    now.getUTCFullYear(),
+    String(now.getUTCMonth() + 1).padStart(2, '0'),
+    String(now.getUTCDate()).padStart(2, '0'),
+    String(now.getUTCHours()).padStart(2, '0'),
+    String(now.getUTCMinutes()).padStart(2, '0'),
+    String(now.getUTCSeconds()).padStart(2, '0'),
+  ].join('')
+  return `submission_word_count_${stamp}_${Math.floor(Math.random() * 1000)}`
+}
+
+function getPreferredScriptID() {
+  return scripts.value.find((item) => item.isEnabled !== false && item.scriptID)?.scriptID || scripts.value[0]?.scriptID
+}
+
+function parsePositiveInteger(text: string) {
+  const value = Number(text)
+  if (!Number.isInteger(value) || value <= 0) {
+    return null
+  }
+  return value
+}
+
+function syncMountEventWithScope() {
+  const options = scopeEventMap[mountForm.scope] || []
+  if (options.length === 0) {
+    return
+  }
+  if (!options.includes(mountForm.eventKey)) {
+    mountForm.eventKey = options[0]
+  }
+}
+
+function syncTargetIDWithTargetType() {
+  if (mountForm.targetType === 'global') {
     mountForm.targetIDText = '0'
     return
   }
 
-  mountForm.targetType = mountForm.scope
   if (mountForm.targetIDText === '0') {
     mountForm.targetIDText = ''
+  }
+}
+
+function resetGuidedForm() {
+  guidedForm.flowName = '投稿后字数统计'
+  guidedForm.flowKey = generateGuidedFlowKey()
+  guidedForm.scope = 'submission'
+  guidedForm.eventKey = 'file_post'
+  guidedForm.targetType = 'track'
+  guidedForm.targetIDText = ''
+  guidedForm.timeoutMs = 20000
+  guidedForm.failureStrategy = 'fail_close'
+  guidedForm.scriptID = getPreferredScriptID()
+  guidedForm.scriptVersionID = undefined
+  guidedVersions.value = []
+}
+
+async function loadGuidedVersions(scriptID: number | undefined) {
+  if (!scriptID) {
+    guidedVersions.value = []
+    guidedForm.scriptVersionID = undefined
+    return
+  }
+
+  guidedVersionLoading.value = true
+  try {
+    const versions = await fetchScriptVersions(scriptID)
+    guidedVersions.value = versions
+    const activeVersion = versions.find((item) => item.isActive)
+    guidedForm.scriptVersionID = activeVersion?.versionID || versions[0]?.versionID
+  } catch (error) {
+    guidedVersions.value = []
+    guidedForm.scriptVersionID = undefined
+    ElMessage.error(error instanceof Error ? error.message : '脚本版本加载失败')
+  } finally {
+    guidedVersionLoading.value = false
+  }
+}
+
+function onGuidedTargetTypeChange() {
+  if (guidedForm.targetType === 'global') {
+    guidedForm.targetIDText = '0'
+    return
+  }
+  if (guidedForm.targetIDText === '0') {
+    guidedForm.targetIDText = ''
+  }
+}
+
+async function createGuidedWordCountFlow() {
+  const scriptID = guidedForm.scriptID
+  const scriptVersionID = guidedForm.scriptVersionID
+  const flowName = guidedForm.flowName.trim()
+  const flowKey = guidedForm.flowKey.trim()
+
+  if (!scriptID) {
+    ElMessage.warning('请先选择脚本')
+    return
+  }
+  if (!scriptVersionID) {
+    ElMessage.warning('请先选择脚本版本')
+    return
+  }
+  if (!flowName) {
+    ElMessage.warning('请填写流程名称')
+    return
+  }
+  if (!validateFlowKey(flowKey, '流程键(flowKey)')) {
+    return
+  }
+
+  let targetID = 0
+  if (guidedForm.targetType !== 'global') {
+    const parsedTargetID = parsePositiveInteger(guidedForm.targetIDText)
+    if (!parsedTargetID) {
+      ElMessage.warning('目标 ID 需要是正整数')
+      return
+    }
+    targetID = parsedTargetID
+  }
+
+  guidedSubmitting.value = true
+  try {
+    const preset = buildSubmissionWordCountPreset({
+      flowName,
+      flowKey,
+      scriptID,
+      scriptVersionID,
+      scope: guidedForm.scope,
+      eventKey: guidedForm.eventKey,
+      targetType: guidedForm.targetType,
+      targetID,
+      failureStrategy: guidedForm.failureStrategy,
+      timeoutMs: guidedForm.timeoutMs,
+    })
+
+    const createdFlow = await createScriptFlow(preset.flow)
+    if (!createdFlow.flowID) {
+      throw new Error('流程创建结果缺少 flowID')
+    }
+
+    await replaceFlowSteps(createdFlow.flowID, preset.steps)
+    await createFlowMount({
+      ...preset.mount,
+      flowID: createdFlow.flowID,
+    })
+    await updateScriptFlowStatus(createdFlow.flowID, { isEnabled: true })
+
+    ElMessage.success('已完成字数统计模板创建，可在专家模式继续调整')
+    await loadFlows()
+    resetGuidedForm()
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '模板创建失败')
+  } finally {
+    guidedSubmitting.value = false
   }
 }
 
@@ -293,6 +539,13 @@ async function loadFlows() {
     const [nextFlows, nextScripts] = await Promise.all([fetchScriptFlows(), fetchScriptDefinitions()])
     flows.value = nextFlows
     scripts.value = nextScripts
+
+    if (!guidedForm.scriptID || !scripts.value.some((item) => item.scriptID === guidedForm.scriptID)) {
+      guidedForm.scriptID = getPreferredScriptID()
+    }
+    if (!guidedForm.flowKey) {
+      guidedForm.flowKey = generateGuidedFlowKey()
+    }
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '流程列表加载失败')
   } finally {
@@ -321,8 +574,12 @@ function openEditDialog(flow: ScriptFlow) {
 
 async function saveFlow() {
   const flowName = flowForm.flowName.trim()
+  const flowKey = flowForm.flowKey.trim()
   if (!flowName) {
     ElMessage.warning('请填写流程名称')
+    return
+  }
+  if (!validateFlowKey(flowKey, '流程键(flowKey)')) {
     return
   }
 
@@ -338,11 +595,12 @@ async function saveFlow() {
 
   const payload: ScriptFlow = {
     flowName,
-    flowKey: flowForm.flowKey.trim() || undefined,
+    flowKey,
     flowDescription: flowForm.flowDescription.trim(),
     description: flowForm.flowDescription.trim(),
     meta,
     extensionData: meta,
+    isEnabled: true,
   }
 
   try {
@@ -483,7 +741,11 @@ async function loadMounts(flowId: number) {
 }
 
 function onMountScopeChange() {
-  syncTargetTypeWithScope()
+  syncMountEventWithScope()
+}
+
+function onMountTargetTypeChange() {
+  syncTargetIDWithTargetType()
 }
 
 async function addMount() {
@@ -499,12 +761,13 @@ async function addMount() {
   }
 
   let targetID = 0
-  if (mountForm.scope !== 'global') {
-    targetID = Number(mountForm.targetIDText)
-    if (!Number.isInteger(targetID) || targetID <= 0) {
+  if (mountForm.targetType !== 'global') {
+    const parsedTargetID = parsePositiveInteger(mountForm.targetIDText)
+    if (!parsedTargetID) {
       ElMessage.warning('目标 ID 需要是正整数')
       return
     }
+    targetID = parsedTargetID
   }
 
   const payload: FlowMount = {
@@ -541,7 +804,17 @@ async function deleteMount(mountId: number | undefined) {
   }
 }
 
-onMounted(loadFlows)
+watch(
+  () => guidedForm.scriptID,
+  (scriptID) => {
+    void loadGuidedVersions(scriptID)
+  },
+)
+
+onMounted(async () => {
+  await loadFlows()
+  resetGuidedForm()
+})
 </script>
 
 <template>
@@ -549,11 +822,126 @@ onMounted(loadFlows)
     <div class="header-row">
       <div>
         <h1 class="page-title">流程管理</h1>
-        <p class="page-subtitle">管理流程定义、步骤编排与全局/比赛/赛道三层挂载</p>
+        <p class="page-subtitle">默认新手向导，专家模式保留完整编排能力</p>
       </div>
-      <el-button type="primary" @click="openCreateDialog">新建流程</el-button>
+      <div class="header-actions">
+        <el-radio-group v-model="manageMode" size="small">
+          <el-radio-button label="guided">新手向导</el-radio-button>
+          <el-radio-button label="expert">专家模式</el-radio-button>
+        </el-radio-group>
+        <el-button v-if="manageMode === 'expert'" type="primary" @click="openCreateDialog">新建流程</el-button>
+      </div>
     </div>
 
+    <el-alert type="info" :closable="false" show-icon>
+      新手向导会自动创建“投稿后字数统计”所需的流程、步骤和挂载。专家模式用于复杂场景。
+    </el-alert>
+
+    <section v-if="manageMode === 'guided'" class="guided-panel">
+      <h3 class="guided-title">一键配置：投稿后字数统计</h3>
+      <p class="guided-hint">默认配置：scope=submission、eventKey=file_post、failureStrategy=fail_close。</p>
+
+      <el-form label-position="top">
+        <el-row :gutter="12">
+          <el-col :xs="24" :md="12">
+            <el-form-item label="选择脚本" required>
+              <el-select v-model="guidedForm.scriptID" filterable placeholder="请选择脚本" style="width: 100%">
+                <el-option
+                  v-for="script in scripts"
+                  :key="script.scriptID"
+                  :label="`${script.scriptName}${script.isEnabled === false ? ' (已停用)' : ''}`"
+                  :value="script.scriptID"
+                />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="12">
+            <el-form-item label="选择脚本版本" required>
+              <el-select
+                v-model="guidedForm.scriptVersionID"
+                :loading="guidedVersionLoading"
+                filterable
+                placeholder="请选择版本"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="version in guidedVersions"
+                  :key="version.versionID"
+                  :label="`${version.versionName || `v${version.versionNum || version.versionID}`}${version.isActive ? ' (已激活)' : ''}`"
+                  :value="version.versionID"
+                />
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-row :gutter="12">
+          <el-col :xs="24" :md="12">
+            <el-form-item label="流程名称" required>
+              <el-input v-model="guidedForm.flowName" />
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="12">
+            <el-form-item label="流程键(flowKey)" required>
+              <el-input v-model="guidedForm.flowKey" placeholder="仅支持字母、数字、下划线和连字符" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-row :gutter="12">
+          <el-col :xs="24" :md="6">
+            <el-form-item label="执行域(scope)">
+              <el-select v-model="guidedForm.scope" disabled style="width: 100%">
+                <el-option v-for="item in mountScopeOptions" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="6">
+            <el-form-item label="事件键(eventKey)">
+              <el-input :model-value="formatEventKey(guidedForm.eventKey)" disabled />
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="6">
+            <el-form-item label="目标范围(targetType)">
+              <el-select v-model="guidedForm.targetType" style="width: 100%" @change="onGuidedTargetTypeChange">
+                <el-option v-for="item in targetTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="6">
+            <el-form-item label="目标ID(targetID)">
+              <el-input
+                v-model="guidedForm.targetIDText"
+                :disabled="guidedForm.targetType === 'global'"
+                placeholder="targetType 非 global 时需填正整数"
+              />
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-row :gutter="12">
+          <el-col :xs="24" :md="12">
+            <el-form-item label="失败策略">
+              <el-select v-model="guidedForm.failureStrategy" style="width: 100%">
+                <el-option v-for="item in failureStrategyOptions" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="12">
+            <el-form-item label="超时(ms)">
+              <el-input-number v-model="guidedForm.timeoutMs" :min="1000" :step="500" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
+
+      <div class="guided-actions">
+        <el-button @click="resetGuidedForm">重置默认</el-button>
+        <el-button type="primary" :loading="guidedSubmitting" @click="createGuidedWordCountFlow">创建模板流程</el-button>
+      </div>
+    </section>
+
+    <template v-else>
     <el-table :data="flows" v-loading="loading" style="width: 100%">
       <el-table-column prop="flowID" label="ID" width="90" />
       <el-table-column prop="flowKey" label="流程键" min-width="140" />
@@ -563,9 +951,9 @@ onMounted(loadFlows)
           {{ scope.row.description || scope.row.flowDescription || '-' }}
         </template>
       </el-table-column>
-      <el-table-column label="触发事件" width="150">
+      <el-table-column label="触发事件" width="220">
         <template #default="scope">
-          {{ (scope.row.meta && scope.row.meta.trigger) || (scope.row.extensionData && scope.row.extensionData.trigger) || '-' }}
+          {{ formatEventKey((scope.row.meta && scope.row.meta.trigger) || (scope.row.extensionData && scope.row.extensionData.trigger)) }}
         </template>
       </el-table-column>
       <el-table-column label="状态" width="120">
@@ -596,8 +984,8 @@ onMounted(loadFlows)
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
-            <el-form-item label="流程键(flowKey)">
-              <el-input v-model="flowForm.flowKey" placeholder="建议用于业务唯一标识" />
+            <el-form-item label="流程键(flowKey)" required>
+              <el-input v-model="flowForm.flowKey" placeholder="仅支持字母、数字、下划线和连字符" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -610,10 +998,10 @@ onMounted(loadFlows)
             filterable
             allow-create
             default-first-option
-            placeholder="例如: work_created"
+            placeholder="例如: file_post"
             style="width: 100%"
           >
-            <el-option v-for="item in eventKeyOptions" :key="item" :label="item" :value="item" />
+            <el-option v-for="item in eventKeyOptions" :key="item" :label="formatEventKey(item)" :value="item" />
           </el-select>
         </el-form-item>
         <el-form-item label="流程元数据(meta，JSON)">
@@ -632,7 +1020,7 @@ onMounted(loadFlows)
       :title="`步骤编辑 - ${currentStepFlow?.flowName || '未命名流程'}`"
     >
       <el-alert type="info" :closable="false" show-icon>
-        步骤支持表单模式与 JSON 模式。字段包含 scriptVersionID、failureStrategy、timeoutMs、inputTemplate。
+        步骤支持表单模式与 JSON 模式。failureStrategy 请使用 fail_close / fail_open / retry。
       </el-alert>
 
       <div class="step-mode-bar">
@@ -736,22 +1124,22 @@ onMounted(loadFlows)
       :title="`挂载管理 - ${currentMountFlow?.flowName || '未命名流程'}`"
     >
       <el-alert type="info" :closable="false" show-icon>
-        挂载层级固定为 global / contest / track。eventKey 默认取流程触发器，可手动修改。
+        scope 表示执行域（submission/system/judge），targetType 表示作用范围（global/contest/track）。
       </el-alert>
 
       <div class="mount-form">
         <el-form label-position="top">
           <el-row :gutter="10">
             <el-col :xs="24" :md="6">
-              <el-form-item label="层级(scope)">
+              <el-form-item label="执行域(scope)">
                 <el-select v-model="mountForm.scope" style="width: 100%" @change="onMountScopeChange">
                   <el-option v-for="item in mountScopeOptions" :key="item.value" :label="item.label" :value="item.value" />
                 </el-select>
               </el-form-item>
             </el-col>
             <el-col :xs="24" :md="6">
-              <el-form-item label="目标类型(targetType)">
-                <el-select v-model="mountForm.targetType" style="width: 100%">
+              <el-form-item label="目标范围(targetType)">
+                <el-select v-model="mountForm.targetType" style="width: 100%" @change="onMountTargetTypeChange">
                   <el-option v-for="item in targetTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
                 </el-select>
               </el-form-item>
@@ -760,8 +1148,8 @@ onMounted(loadFlows)
               <el-form-item label="目标ID(targetID)">
                 <el-input
                   v-model="mountForm.targetIDText"
-                  :disabled="mountForm.scope === 'global'"
-                  placeholder="contest/track 需填正整数"
+                  :disabled="mountForm.targetType === 'global'"
+                  placeholder="targetType 非 global 时需填正整数"
                 />
               </el-form-item>
             </el-col>
@@ -780,10 +1168,10 @@ onMounted(loadFlows)
                   filterable
                   allow-create
                   default-first-option
-                  placeholder="例如: work_created"
+                  placeholder="例如: file_post"
                   style="width: 100%"
                 >
-                  <el-option v-for="item in eventKeyOptions" :key="item" :label="item" :value="item" />
+                  <el-option v-for="item in mountEventOptions" :key="item" :label="formatEventKey(item)" :value="item" />
                 </el-select>
               </el-form-item>
             </el-col>
@@ -798,14 +1186,14 @@ onMounted(loadFlows)
 
       <el-table :data="mounts" v-loading="mountLoading" style="width: 100%">
         <el-table-column prop="mountID" label="挂载ID" width="100" />
-        <el-table-column label="层级" width="110">
+        <el-table-column label="执行域" width="130">
           <template #default="scope">
-            {{ resolveScope(scope.row) }}
+            {{ formatScope(resolveScope(scope.row)) }}
           </template>
         </el-table-column>
-        <el-table-column label="目标类型" width="120">
+        <el-table-column label="目标范围" width="120">
           <template #default="scope">
-            {{ resolveTargetType(scope.row) }}
+            {{ formatTargetType(resolveTargetType(scope.row)) }}
           </template>
         </el-table-column>
         <el-table-column label="目标ID" width="120">
@@ -813,7 +1201,11 @@ onMounted(loadFlows)
             {{ resolveTargetID(scope.row) }}
           </template>
         </el-table-column>
-        <el-table-column prop="eventKey" label="事件键" min-width="160" />
+        <el-table-column label="事件键" min-width="220">
+          <template #default="scope">
+            {{ formatEventKey(scope.row.eventKey) }}
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="scope">
             <el-tag :type="scope.row.isEnabled ? 'success' : 'info'">{{ scope.row.isEnabled ? '启用' : '停用' }}</el-tag>
@@ -831,6 +1223,7 @@ onMounted(loadFlows)
     <el-alert v-if="scripts.length === 0" type="warning" :closable="false" class="hint">
       当前未发现可用脚本，建议先在脚本管理页创建脚本后再配置流程步骤。
     </el-alert>
+    </template>
   </section>
 </template>
 

@@ -30,17 +30,19 @@ var (
 	getTracksByContestFn = pgsql.GetTracksByContestID
 	getContestByIDFn     = pgsql.GetContestByID
 
-	createTrackFn                = pgsql.CreateTrack
-	updateTrackFn                = pgsql.UpdateTrack
-	deleteTrackFn                = pgsql.DeleteTrack
-	createTrackCacheFn           = redis.CreateTrack
-	deleteTrackCacheFn           = redis.DeleteTrack
-	registerContestEndScheduleFn = system.RegisterContestEndSchedule
-	cancelContestEndScheduleFn   = system.CancelContestEndSchedule
-	listAuthorsFn                = pgsql.ListAuthors
-	getAuthorByIDFn              = pgsql.GetAuthorByAuthorID
-	updateAuthorByIDFn           = pgsql.UpdateAuthorByID
-	deleteAuthorByIDFn           = pgsql.DeleteAuthorByID
+	createTrackFn                   = pgsql.CreateTrack
+	updateTrackFn                   = pgsql.UpdateTrack
+	deleteTrackFn                   = pgsql.DeleteTrack
+	createTrackCacheFn              = redis.CreateTrack
+	deleteTrackCacheFn              = redis.DeleteTrack
+	registerContestEndScheduleFn    = system.RegisterContestEndSchedule
+	cancelContestEndScheduleFn      = system.CancelContestEndSchedule
+	requestContestEndReplayFn       = system.RequestContestEndReplay
+	resetContestEndStateByContestFn = pgsql.ResetContestEndExecutionByContest
+	listAuthorsFn                   = pgsql.ListAuthors
+	getAuthorByIDFn                 = pgsql.GetAuthorByAuthorID
+	updateAuthorByIDFn              = pgsql.UpdateAuthorByID
+	deleteAuthorByIDFn              = pgsql.DeleteAuthorByID
 
 	getWorkByIDFn      = pgsql.GetWorkByID
 	getWorksByTrackFn  = pgsql.GetWorksByTrackID
@@ -117,13 +119,56 @@ func createContestSrc(adminID int, contest *model.Contest) error {
 }
 
 func updateContestSrc(adminID int, contestID int, updatedContest *model.Contest) error {
+	originalContest, err := getContestByIDFn(contestID)
+	if err != nil {
+		log.Logger.Warn("Get contest before update error: " + err.Error())
+		return uerr.ExtractError(err)
+	}
+	if log.Logger != nil {
+		log.Logger.Debug(
+			"contest_update_received: contestID=" + strconv.Itoa(contestID) +
+				" originalEnd=" + formatContestTimeForDebug(originalContest.ContestEndDate) +
+				" updatedEnd=" + formatContestTimeForDebug(updatedContest.ContestEndDate) +
+				" originalStart=" + formatContestTimeForDebug(originalContest.ContestStartDate) +
+				" updatedStart=" + formatContestTimeForDebug(updatedContest.ContestStartDate),
+		)
+	}
+
 	updatedContest.ContestID = contestID
-	err := updateContestFn(contestID, updatedContest)
+	err = updateContestFn(contestID, updatedContest)
 	if err != nil {
 		log.Logger.Warn("Update contest error: " + err.Error())
 		return uerr.ExtractError(err)
 	}
 
+	endDateChanged := contestEndDateChanged(originalContest, *updatedContest)
+	if log.Logger != nil {
+		log.Logger.Debug(
+			"contest_update_enddate_check: contestID=" + strconv.Itoa(contestID) +
+				" changed=" + strconv.FormatBool(endDateChanged) +
+				" originalEnd=" + formatContestTimeForDebug(originalContest.ContestEndDate) +
+				" updatedEnd=" + formatContestTimeForDebug(updatedContest.ContestEndDate),
+		)
+	}
+
+	if endDateChanged {
+		if log.Logger != nil {
+			log.Logger.Debug("contest_update_reset_contest_end_state: contestID=" + strconv.Itoa(contestID))
+		}
+		if err = resetContestEndStateByContestFn(contestID); err != nil {
+			log.Logger.Warn("Reset contest_end execution state error: " + err.Error())
+			return uerr.ExtractError(err)
+		}
+	} else if log.Logger != nil {
+		log.Logger.Debug("contest_update_skip_reset_contest_end_state: contestID=" + strconv.Itoa(contestID) + " reason=end-date-not-changed-or-zero")
+	}
+
+	if log.Logger != nil {
+		log.Logger.Debug(
+			"contest_update_register_schedule: contestID=" + strconv.Itoa(contestID) +
+				" end=" + formatContestTimeForDebug(updatedContest.ContestEndDate),
+		)
+	}
 	registerContestEndScheduleFn(*updatedContest)
 
 	tracks, err := getTracksByContestFn(contestID)
@@ -144,6 +189,21 @@ func updateContestSrc(adminID int, contestID int, updatedContest *model.Contest)
 		genDetails([]string{"contest_name", "contest_id"}, []string{updatedContest.ContestName, strconv.Itoa(contestID)}))
 
 	return nil
+}
+
+func contestEndDateChanged(originalContest model.Contest, updatedContest model.Contest) bool {
+	if originalContest.ContestEndDate.IsZero() || updatedContest.ContestEndDate.IsZero() {
+		return false
+	}
+
+	return !originalContest.ContestEndDate.UTC().Equal(updatedContest.ContestEndDate.UTC())
+}
+
+func formatContestTimeForDebug(ts time.Time) string {
+	if ts.IsZero() {
+		return "-"
+	}
+	return ts.UTC().Format(time.RFC3339)
 }
 
 func deleteContestSrc(adminID int, contestID int) error {
@@ -171,6 +231,25 @@ func deleteContestSrc(adminID int, contestID int) error {
 	// 记录管理行为日志
 	createActionLogFn(adminID, _const.Contests, _const.Delete,
 		genDetails([]string{"contest_name", "contest_id"}, []string{contest.ContestName, strconv.Itoa(contestID)}))
+
+	return nil
+}
+
+func replayContestEndSrc(adminID int, contestID int, trackID int) error {
+	err := requestContestEndReplayFn(contestID, trackID)
+	if err != nil {
+		log.Logger.Warn("Replay contest_end error: " + err.Error())
+		return uerr.ExtractError(err)
+	}
+
+	detailsKeys := []string{"contest_id"}
+	detailsValues := []string{strconv.Itoa(contestID)}
+	if trackID > 0 {
+		detailsKeys = append(detailsKeys, "track_id")
+		detailsValues = append(detailsValues, strconv.Itoa(trackID))
+	}
+
+	createActionLogFn(adminID, _const.Contests, _const.Update, genDetails(detailsKeys, detailsValues))
 
 	return nil
 }

@@ -196,11 +196,11 @@ async function downloadFile(workId: number | undefined) {
   }
 
   try {
-    const blob = await downloadWorkFile(workId)
+    const { blob, filename } = await downloadWorkFile(workId)
     const objectUrl = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = objectUrl
-    link.download = `work-${workId}.bin`
+    link.download = filename
     document.body.appendChild(link)
     link.click()
     link.remove()

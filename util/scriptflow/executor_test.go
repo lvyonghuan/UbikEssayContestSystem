@@ -113,3 +113,58 @@ func TestExecuteChainFailOpen(t *testing.T) {
 		t.Fatal("result should remain allowed for fail_open")
 	}
 }
+
+func TestExecuteChainBuiltinStepSuccess(t *testing.T) {
+	executor := NewExecutor(".", 2*time.Second, []string{InterpreterBuiltinGo})
+	executor.RegisterBuiltinStepHandler("builtin/test/ok", func(ctx context.Context, input ExecuteInput) (ExecuteOutput, error) {
+		return ExecuteOutput{
+			Allow: true,
+			Patch: map[string]any{"ok": true},
+		}, nil
+	})
+
+	result, err := executor.ExecuteChain(context.Background(), ChainConfig{
+		Scope:    ScopeSystem,
+		EventKey: EventContestEnd,
+		FlowKey:  "flow_builtin",
+		Steps: []StepConfig{{
+			StepName:        "builtin_step",
+			Interpreter:     InterpreterBuiltinGo,
+			ScriptPath:      "builtin/test/ok",
+			FailureStrategy: "fail_close",
+			Timeout:         2 * time.Second,
+		}},
+	}, ExecuteInput{Scope: ScopeSystem, EventKey: EventContestEnd})
+	if err != nil {
+		t.Fatalf("builtin step should succeed: %v", err)
+	}
+	if !result.Allowed {
+		t.Fatal("builtin step result should be allowed")
+	}
+	if got, ok := result.Patch["ok"].(bool); !ok || !got {
+		t.Fatalf("unexpected builtin patch: %+v", result.Patch)
+	}
+}
+
+func TestExecuteChainBuiltinStepMissingHandler(t *testing.T) {
+	executor := NewExecutor(".", 2*time.Second, []string{InterpreterBuiltinGo})
+
+	result, err := executor.ExecuteChain(context.Background(), ChainConfig{
+		Scope:    ScopeSystem,
+		EventKey: EventContestEnd,
+		FlowKey:  "flow_builtin",
+		Steps: []StepConfig{{
+			StepName:        "builtin_step",
+			Interpreter:     InterpreterBuiltinGo,
+			ScriptPath:      "builtin/test/missing",
+			FailureStrategy: "fail_close",
+			Timeout:         2 * time.Second,
+		}},
+	}, ExecuteInput{Scope: ScopeSystem, EventKey: EventContestEnd})
+	if err == nil {
+		t.Fatal("expected missing builtin handler to return error")
+	}
+	if result.Allowed {
+		t.Fatal("result should be blocked when builtin handler is missing")
+	}
+}

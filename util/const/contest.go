@@ -14,4 +14,4 @@ const (
 )
 
 const FileRootPath = "./files"
-const SubmissionFileRootPath = "./submissions"
+const SubmissionFileRootPath = "./files/submissions"

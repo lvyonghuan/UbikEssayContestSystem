@@ -15,6 +15,16 @@ import type { ScriptDefinition, ScriptVersion } from '@/types/api'
 const loading = ref(false)
 const scripts = ref<ScriptDefinition[]>([])
 
+const scriptKeyPattern = /^[a-zA-Z0-9_-]+$/
+const interpreterOptions = [
+  { label: 'Python 3', value: 'python3' },
+  { label: 'Python (兼容)', value: 'python' },
+  { label: 'Bash', value: 'bash' },
+  { label: 'Shell (sh)', value: 'sh' },
+  { label: 'Node.js', value: 'node' },
+  { label: '内置 Go 执行器', value: 'builtin_go' },
+]
+
 const dialogVisible = ref(false)
 const editingScriptId = ref<number | null>(null)
 const form = reactive({
@@ -70,12 +80,16 @@ function openCreateDialog() {
 }
 
 function openEditDialog(script: ScriptDefinition) {
+  const nextInterpreter = interpreterOptions.some((item) => item.value === script.interpreter)
+    ? (script.interpreter as string)
+    : 'python3'
+
   editingScriptId.value = script.scriptID || null
   Object.assign(form, {
     scriptName: script.scriptName,
     scriptKey: script.scriptKey || '',
     scriptDescription: normalizeScriptDescription(script),
-    interpreter: script.interpreter || 'python3',
+    interpreter: nextInterpreter,
     metaText: JSON.stringify(normalizeScriptMeta(script), null, 2),
   })
   dialogVisible.value = true
@@ -94,10 +108,32 @@ function parseMeta() {
   }
 }
 
+function validateScriptKey(scriptKey: string) {
+  if (!scriptKey) {
+    ElMessage.warning('请填写脚本键(scriptKey)')
+    return false
+  }
+  if (!scriptKeyPattern.test(scriptKey)) {
+    ElMessage.warning('脚本键仅支持字母、数字、下划线和连字符')
+    return false
+  }
+  return true
+}
+
 async function saveScript() {
   const scriptName = form.scriptName.trim()
+  const scriptKey = form.scriptKey.trim()
+  const interpreter = form.interpreter.trim()
+
   if (!scriptName) {
     ElMessage.warning('请填写脚本名称')
+    return
+  }
+  if (!validateScriptKey(scriptKey)) {
+    return
+  }
+  if (!interpreterOptions.some((item) => item.value === interpreter)) {
+    ElMessage.warning('请选择受支持的解释器')
     return
   }
 
@@ -108,10 +144,10 @@ async function saveScript() {
 
   const payload: ScriptDefinition = {
     scriptName,
-    scriptKey: form.scriptKey.trim() || undefined,
+    scriptKey,
     description: form.scriptDescription.trim(),
     scriptDescription: form.scriptDescription.trim(),
-    interpreter: form.interpreter.trim() || undefined,
+    interpreter,
     meta,
     extensionData: meta,
   }
@@ -233,6 +269,10 @@ onMounted(loadScripts)
       <el-button type="primary" @click="openCreateDialog">新建脚本</el-button>
     </div>
 
+    <el-alert type="info" :closable="false" show-icon>
+      新手建议：scriptKey 建议按业务命名（如 submission_word_count），解释器请从下拉中选择受支持项。
+    </el-alert>
+
     <el-table :data="scripts" v-loading="loading" style="width: 100%">
       <el-table-column prop="scriptID" label="ID" width="90" />
       <el-table-column prop="scriptKey" label="脚本键" min-width="140" />
@@ -275,15 +315,17 @@ onMounted(loadScripts)
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
-            <el-form-item label="脚本键(scriptKey)">
-              <el-input v-model="form.scriptKey" placeholder="建议唯一" />
+            <el-form-item label="脚本键(scriptKey)" required>
+              <el-input v-model="form.scriptKey" placeholder="仅支持字母、数字、下划线和连字符" />
             </el-form-item>
           </el-col>
         </el-row>
         <el-row :gutter="12">
           <el-col :xs="24" :md="12">
             <el-form-item label="解释器">
-              <el-input v-model="form.interpreter" placeholder="例如 python3" />
+              <el-select v-model="form.interpreter" placeholder="请选择解释器" style="width: 100%">
+                <el-option v-for="item in interpreterOptions" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">

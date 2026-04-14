@@ -148,8 +148,7 @@ func TestStrongDepsFullChainAllFiles(t *testing.T) {
 		report.CategoryCounters[f.Category]++
 		report.ExtCounters[f.Ext]++
 	}
-
-	// S1: 比赛进行中，全量文件跑通
+	// S1: ongoing contest with all files
 	contestID, trackByCategory := mustCreateContestAndTracks(
 		t,
 		client,
@@ -200,8 +199,7 @@ func TestStrongDepsFullChainAllFiles(t *testing.T) {
 		Passed: len(report.FileRunResults) >= len(files),
 		Detail: "all files under tests_files were executed through submission and upload pipeline",
 	})
-
-	// S2: 比赛未开始
+	// S2: contest not started
 	futureContestID, futureTracks := mustCreateContestAndTracks(
 		t,
 		client,
@@ -228,8 +226,7 @@ func TestStrongDepsFullChainAllFiles(t *testing.T) {
 		Passed: notStartedPass,
 		Detail: fmt.Sprintf("submission code=%d msg=%s", futureCode, futureMsg),
 	})
-
-	// S3: 比赛已结束
+	// S3: contest already ended
 	pastContestID, pastTracks := mustCreateContestAndTracks(
 		t,
 		client,
@@ -257,7 +254,7 @@ func TestStrongDepsFullChainAllFiles(t *testing.T) {
 		Detail: fmt.Sprintf("submission code=%d msg=%s", pastCode, pastMsg),
 	})
 
-	// S4/S5: 杈句笂闄愩€佸垹闄ゅ悗缁х画鎶曠
+	// S4/S5: 鏉堝彞绗傞梽鎰┾偓浣稿灩闂勩倕鎮楃紒褏鐢婚幎鏇狀焾
 	limitContestID, limitTracks := mustCreateContestAndTracks(
 		t,
 		client,
@@ -340,7 +337,7 @@ func TestStrongDepsFullChainAllFiles(t *testing.T) {
 		Detail: "4th submission blocked, delete one work then submission succeeds",
 	})
 
-	// S6: 璺ㄨ禌閬撶疮璁″悓涓€姣旇禌涓婇檺
+	// S6: 鐠恒劏绂岄柆鎾剁柈鐠佲€虫倱娑撯偓濮ｆ棁绂屾稉濠囨
 	crossContestID, crossTracks := mustCreateContestAndTracks(
 		t,
 		client,
@@ -365,7 +362,7 @@ func TestStrongDepsFullChainAllFiles(t *testing.T) {
 		Detail: fmt.Sprintf("4th cross-track submission code=%d msg=%s", code4, msg4),
 	})
 
-	// S7: file_post 鑴氭湰杈撳嚭闈炴硶JSON
+	// S7: file_post 閼存碍婀版潏鎾冲毉闂堢偞纭禞SON
 	invalidContestID, invalidTracks := mustCreateContestAndTracks(
 		t,
 		client,
@@ -403,8 +400,7 @@ func TestStrongDepsFullChainAllFiles(t *testing.T) {
 		Passed: invalidPass,
 		Detail: fmt.Sprintf("upload code=%d msg=%s", uploadCode, uploadMsg),
 	})
-
-	// S8: 寮傚父鍛藉悕鏂囦欢鍥為€€瑙ｆ瀽
+	// S8: fallback filename parsing
 	fallbackFile, hasFallback := pickFallbackDocx(files)
 	if hasFallback {
 		fallbackContestID, fallbackTracks := mustCreateContestAndTracks(
@@ -914,7 +910,7 @@ func runOneFileThroughSubmission(
 	result.UploadMsg = uploadMsg
 
 	if uploadCode == 200 {
-		savedPath := filepath.Join(repoRoot, "submissions", strconv.Itoa(trackID), strconv.Itoa(session.AuthorID), strconv.Itoa(workID)+".docx")
+		savedPath := filepath.Join(repoRoot, "files", "submissions", strconv.Itoa(trackID), strconv.Itoa(session.AuthorID), strconv.Itoa(workID)+".docx")
 		result.SavedDocx = filepath.ToSlash(savedPath)
 		if _, err := os.Stat(savedPath); err != nil {
 			result.UploadMsg = "saved file missing: " + err.Error()
@@ -1003,7 +999,7 @@ func mustUploadAndVerify(t *testing.T, client *http.Client, submissionBaseURL st
 	if code != 200 {
 		t.Fatalf("upload should pass for file=%s code=%d msg=%s", file.RelPath, code, msg)
 	}
-	savedPath := filepath.Join(repoRoot, "submissions", strconv.Itoa(trackID), strconv.Itoa(session.AuthorID), strconv.Itoa(workID)+".docx")
+	savedPath := filepath.Join(repoRoot, "files", "submissions", strconv.Itoa(trackID), strconv.Itoa(session.AuthorID), strconv.Itoa(workID)+".docx")
 	if _, err := os.Stat(savedPath); err != nil {
 		t.Fatalf("saved file missing: %v", err)
 	}

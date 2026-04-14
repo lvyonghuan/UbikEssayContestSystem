@@ -17,6 +17,10 @@ const (
 	EventContestEnd          = "contest_end"
 )
 
+const (
+	InterpreterBuiltinGo = "builtin_go"
+)
+
 type ExecuteInput struct {
 	Scope    string         `json:"scope"`
 	EventKey string         `json:"eventKey"`

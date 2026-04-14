@@ -9,6 +9,7 @@ import (
 	"main/model"
 	_const "main/util/const"
 	"main/util/log"
+	"main/util/scriptflow"
 	"mime/multipart"
 	"os"
 	"path/filepath"
@@ -52,11 +53,12 @@ var (
 var (
 	scriptKeyRegexp     = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 	allowedInterpreters = map[string]struct{}{
-		"python3": {},
-		"python":  {},
-		"bash":    {},
-		"sh":      {},
-		"node":    {},
+		"python3":                       {},
+		"python":                        {},
+		"bash":                          {},
+		"sh":                            {},
+		"node":                          {},
+		scriptflow.InterpreterBuiltinGo: {},
 	}
 )
 

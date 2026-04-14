@@ -27,7 +27,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		`CREATE TABLE role_permissions (role_id INTEGER NOT NULL, permission_id INTEGER NOT NULL, PRIMARY KEY (role_id, permission_id));`,
 		`CREATE TABLE admin_roles (admin_id INTEGER NOT NULL, role_id INTEGER NOT NULL, PRIMARY KEY (admin_id, role_id));`,
 		`CREATE TABLE contests (contest_id INTEGER PRIMARY KEY AUTOINCREMENT, contest_name TEXT, contest_start_date TIMESTAMP, contest_end_date TIMESTAMP, contest_introduction TEXT);`,
-		`CREATE TABLE tracks (track_id INTEGER PRIMARY KEY AUTOINCREMENT, track_name TEXT, contest_id INTEGER, track_description TEXT, track_settings TEXT);`,
+		`CREATE TABLE tracks (track_id INTEGER PRIMARY KEY AUTOINCREMENT, track_name TEXT, contest_id INTEGER, track_description TEXT, track_settings TEXT, contest_end_status TEXT NOT NULL DEFAULT 'pending', contest_end_attempt_count INTEGER NOT NULL DEFAULT 0, contest_end_last_error TEXT, contest_end_last_started_at TIMESTAMP NULL, contest_end_last_finished_at TIMESTAMP NULL, contest_end_trigger_source TEXT NOT NULL DEFAULT 'system', contest_end_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);`,
 		`CREATE TABLE works (work_id INTEGER PRIMARY KEY AUTOINCREMENT, work_title TEXT, track_id INTEGER, author_id INTEGER, work_status TEXT DEFAULT 'submission_success', work_infos TEXT);`,
 		`CREATE TABLE judges (judge_id INTEGER PRIMARY KEY AUTOINCREMENT, judge_name TEXT, password TEXT);`,
 		`CREATE TABLE review_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT, track_id INTEGER, event_name TEXT, work_status TEXT DEFAULT 'submission_success', start_time TIMESTAMP, end_time TIMESTAMP);`,

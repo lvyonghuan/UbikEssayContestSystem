@@ -19,7 +19,7 @@
 3. 创建脚本定义、上传脚本版本、创建流程与挂载
 4. 作者注册/登录
 5. 使用 `tests_files` 全量原始文件执行投稿与上传
-6. 校验数据库与 `submissions` 文件落盘结果
+6. 校验数据库与 `files/submissions` 文件落盘结果
 
 ### 内置脚本策略
 
@@ -29,6 +29,29 @@
 - 字数统计脚本: scripts/submission_hooks/count_docx_words.py
 	- 事件: submission/file_post
 	- 规则: 读取已保存 docx 内容，统计字数后写入 work_infos.word_count
+	- 依赖: 运行脚本的 Python 环境需安装 PyICU
+
+### 字数统计脚本挂载说明
+
+`scripts/submission_hooks/count_docx_words.py` 仅提供脚本实现，不会在系统启动时自动创建默认挂载。
+
+管理员可通过脚本流配置将该脚本挂载到 `submission/file_post`：
+
+1. 创建脚本定义（interpreter=`python`）
+2. 上传脚本版本（文件路径使用 `scripts/submission_hooks/count_docx_words.py`）
+3. 创建脚本流（例如 `file_post_word_count`）
+4. 为脚本流添加步骤，建议 `failureStrategy=fail_close`
+5. 创建挂载：`scope=submission`，`eventKey=file_post`，`targetType=track` 或 `global`
+
+脚本输入取自上传接口 file_post payload，核心字段为：
+
+- `payload.savedPath`: 已落盘 docx 路径
+- `payload.workID`: 作品 ID
+- `payload.trackID`: 赛道 ID
+
+脚本输出 JSON 中的 patch 仅写入：
+
+- `word_count` -> `works.work_infos.word_count`
 
 ### 场景覆盖
 
@@ -63,7 +86,7 @@
 测试结果默认保留，不自动清理：
 
 1. 报告文件：`tests_files/private_e2e_results/`
-2. 投稿文件：`submissions/<track_id>/<author_id>/<work_id>.docx`
+2. 投稿文件：`files/submissions/<track_id>/<author_id>/<work_id>.docx`
 3. 数据库记录：`contests`、`tracks`、`authors`、`works`、`script_*`、`action_logs`
 
 ## 私有数据策略
@@ -72,4 +95,4 @@
 
 1. `tests_files/`
 2. `tests_files/private_e2e_results/`
-3. `submissions/`
+3. `files/`

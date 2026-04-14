@@ -19,10 +19,13 @@ var (
 	ErrExecutionBlocked = errors.New("script flow blocked the request")
 )
 
+type BuiltinStepHandler func(ctx context.Context, input ExecuteInput) (ExecuteOutput, error)
+
 type Executor struct {
 	baseDir             string
 	defaultTimeout      time.Duration
 	allowedInterpreters map[string]struct{}
+	builtinStepHandlers map[string]BuiltinStepHandler
 }
 
 func NewExecutor(baseDir string, defaultTimeout time.Duration, allowedInterpreters []string) *Executor {
@@ -39,6 +42,26 @@ func NewExecutor(baseDir string, defaultTimeout time.Duration, allowedInterprete
 		baseDir:             baseDir,
 		defaultTimeout:      defaultTimeout,
 		allowedInterpreters: allowed,
+		builtinStepHandlers: map[string]BuiltinStepHandler{},
+	}
+}
+
+func (e *Executor) RegisterBuiltinStepHandler(stepKey string, handler BuiltinStepHandler) {
+	if e == nil || handler == nil {
+		return
+	}
+
+	key := filepath.ToSlash(strings.TrimSpace(stepKey))
+	if key == "" {
+		return
+	}
+
+	e.builtinStepHandlers[key] = handler
+}
+
+func (e *Executor) RegisterBuiltinStepHandlers(handlers map[string]BuiltinStepHandler) {
+	for stepKey, handler := range handlers {
+		e.RegisterBuiltinStepHandler(stepKey, handler)
 	}
 }
 
@@ -131,11 +154,11 @@ func (e *Executor) executeStep(ctx context.Context, step StepConfig, input Execu
 		}
 	}
 
-	scriptPath, err := e.resolveScriptPath(step.ScriptPath)
-	if err != nil {
+	scriptRef := strings.TrimSpace(step.ScriptPath)
+	if scriptRef == "" {
 		stepResult.DurationMs = time.Since(started).Milliseconds()
-		stepResult.Message = err.Error()
-		return stepResult, ExecuteOutput{}, err
+		stepResult.Message = "script path is required"
+		return stepResult, ExecuteOutput{}, uerr.NewError(errors.New(stepResult.Message))
 	}
 
 	timeout := step.Timeout
@@ -158,6 +181,27 @@ func (e *Executor) executeStep(ctx context.Context, step StepConfig, input Execu
 		request.Context = map[string]any{}
 	}
 	request.Context["stepInput"] = step.InputTemplate
+
+	if interpreter == InterpreterBuiltinGo {
+		output, err := e.executeBuiltinStep(stepCtx, scriptRef, request)
+		stepResult.DurationMs = time.Since(started).Milliseconds()
+		if err != nil {
+			stepResult.Message = err.Error()
+			return stepResult, ExecuteOutput{}, err
+		}
+
+		stepResult.Success = true
+		stepResult.Message = output.Message
+		stepResult.Patch = output.Patch
+		return stepResult, output, nil
+	}
+
+	scriptPath, err := e.resolveScriptPath(scriptRef)
+	if err != nil {
+		stepResult.DurationMs = time.Since(started).Milliseconds()
+		stepResult.Message = err.Error()
+		return stepResult, ExecuteOutput{}, err
+	}
 
 	stdinData, err := json.Marshal(request)
 	if err != nil {
@@ -195,6 +239,29 @@ func (e *Executor) executeStep(ctx context.Context, step StepConfig, input Execu
 	stepResult.Message = output.Message
 	stepResult.Patch = output.Patch
 	return stepResult, output, nil
+}
+
+func (e *Executor) executeBuiltinStep(ctx context.Context, stepKey string, input ExecuteInput) (ExecuteOutput, error) {
+	key := filepath.ToSlash(strings.TrimSpace(stepKey))
+	if key == "" {
+		return ExecuteOutput{}, uerr.NewError(errors.New("builtin step key is required"))
+	}
+
+	handler, ok := e.builtinStepHandlers[key]
+	if !ok {
+		return ExecuteOutput{}, uerr.NewError(errors.New("builtin step handler not found: " + key))
+	}
+
+	output, err := handler(ctx, input)
+	if err != nil {
+		return ExecuteOutput{}, uerr.NewError(err)
+	}
+
+	if !output.Allow && strings.TrimSpace(output.Message) == "" {
+		output.Allow = true
+	}
+
+	return output, nil
 }
 
 func (e *Executor) resolveScriptPath(relativePath string) (string, error) {

@@ -349,7 +349,7 @@ func TestSubmissionRoutesSmokeSuccess(t *testing.T) {
 		t.Fatal("download should include X-File-SHA256 header")
 	}
 
-	savedPath := filepath.Join(tmp, "submissions", "2", "1", "10.docx")
+	savedPath := filepath.Join(tmp, "files", "submissions", "2", "1", "10.docx")
 	if _, err := os.Stat(savedPath); err != nil {
 		t.Fatalf("expected saved docx file: %v", err)
 	}
@@ -437,11 +437,11 @@ func TestSaveSubmissionFileDocConversionAndPatch(t *testing.T) {
 		t.Fatalf("expected patch called three times(pre+integrity+post), got %d", patchCalls)
 	}
 
-	docxPath := filepath.Join(tmp, "submissions", "2", "1", "11.docx")
+	docxPath := filepath.Join(tmp, "files", "submissions", "2", "1", "11.docx")
 	if _, err := os.Stat(docxPath); err != nil {
 		t.Fatalf("expected converted docx exists: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, "submissions", "2", "1", "11.doc")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(tmp, "files", "submissions", "2", "1", "11.doc")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("temp doc should be removed, stat err=%v", err)
 	}
 }
@@ -767,10 +767,10 @@ func TestSaveSubmissionFileErrorPaths(t *testing.T) {
 		return scriptflow.ChainResult{Allowed: true}, nil
 	}
 
-	if err := os.MkdirAll(filepath.Join(tmp, "submissions", "2"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(tmp, "files", "submissions", "2"), 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, "submissions", "2", "1"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "files", "submissions", "2", "1"), []byte("x"), 0o644); err != nil {
 		t.Fatalf("write file failed: %v", err)
 	}
 	w = doMultipartRequest(router, "/api/v1/author/submission/file", "Bearer author", map[string]string{"work_id": "4"}, "article_file", "a.docx", []byte("x"))
@@ -778,7 +778,7 @@ func TestSaveSubmissionFileErrorPaths(t *testing.T) {
 		t.Fatalf("expected 500, got %d", code)
 	}
 
-	_ = os.Remove(filepath.Join(tmp, "submissions", "2", "1"))
+	_ = os.Remove(filepath.Join(tmp, "files", "submissions", "2", "1"))
 	newDocumentConverterFn = func() document.Converter {
 		return converterFunc(func(ctx context.Context, srcDocPath string, dstDocxPath string) error {
 			return errors.New("convert fail")
@@ -803,7 +803,7 @@ func TestSaveSubmissionFileErrorPaths(t *testing.T) {
 	if code := decodeRespCode(t, w.Body.Bytes()); code != 400 {
 		t.Fatalf("expected 400 for hash mismatch, got %d", code)
 	}
-	if _, statErr := os.Stat(filepath.Join(tmp, "submissions", "2", "1", "6.docx")); !errors.Is(statErr, os.ErrNotExist) {
+	if _, statErr := os.Stat(filepath.Join(tmp, "files", "submissions", "2", "1", "6.docx")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("hash mismatch should remove uploaded file, stat err=%v", statErr)
 	}
 

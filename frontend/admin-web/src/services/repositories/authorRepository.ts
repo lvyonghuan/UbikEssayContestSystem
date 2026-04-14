@@ -26,3 +26,18 @@ export async function fetchAuthors(params: AuthorQueryParams = {}) {
   })
   return normalizeAuthorList(unwrapResponse(data))
 }
+
+export async function fetchAuthorByID(authorId: number) {
+  const { data } = await adminClient.get<ApiResponse<Author>>(`/admin/authors/${authorId}`)
+  return unwrapResponse(data)
+}
+
+export async function updateAuthor(authorId: number, payload: Author) {
+  const { data } = await adminClient.put<ApiResponse<Author>>(`/admin/authors/${authorId}`, payload)
+  return unwrapResponse(data)
+}
+
+export async function deleteAuthor(authorId: number) {
+  const { data } = await adminClient.delete<ApiResponse<null>>(`/admin/authors/${authorId}`)
+  unwrapResponse(data)
+}

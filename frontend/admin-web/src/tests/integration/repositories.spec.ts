@@ -98,7 +98,7 @@ describe('repositories with mock api', () => {
       flowName: '测试流程',
       flowKey: 'integration-flow',
       description: 'integration flow',
-      meta: { trigger: 'work_created' },
+      meta: { trigger: 'file_post' },
     })
     expect(createdFlow.flowID).toBeTruthy()
 
@@ -111,7 +111,7 @@ describe('repositories with mock api', () => {
         stepName: 'step1',
         scriptID: scriptId,
         scriptVersionID: versionId,
-        failureStrategy: 'CONTINUE',
+        failureStrategy: 'fail_close',
         timeoutMs: 5000,
         inputTemplate: { retry: 0 },
         isEnabled: true,
@@ -121,18 +121,18 @@ describe('repositories with mock api', () => {
     const steps = await fetchFlowSteps(flowId)
     expect(steps.length).toBeGreaterThan(0)
     expect(steps[0].scriptVersionID).toBe(versionId)
-    expect(steps[0].failureStrategy).toBe('CONTINUE')
+    expect(steps[0].failureStrategy).toBe('fail_close')
 
     const mount = await createFlowMount({
       flowID: flowId,
-      scope: 'track',
+      scope: 'submission',
       targetType: 'track',
       targetID: 101,
-      eventKey: 'work_created',
+      eventKey: 'file_post',
       isEnabled: true,
     })
     expect(mount.mountID).toBeTruthy()
-    expect(mount.scope).toBe('track')
+    expect(mount.scope).toBe('submission')
 
     const mounts = await fetchFlowMounts(flowId)
     expect(mounts.length).toBeGreaterThan(0)

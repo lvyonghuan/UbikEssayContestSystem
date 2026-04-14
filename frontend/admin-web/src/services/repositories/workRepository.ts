@@ -1,6 +1,6 @@
 import { adminClient } from '@/services/http/client'
 import { unwrapResponse } from '@/services/http/response'
-import { assertBlobNotApiError } from '@/services/http/blob'
+import { assertBlobNotApiError, parseAttachmentFilename } from '@/services/http/blob'
 import type { ApiResponse, Work, WorkQueryParams } from '@/types/api'
 
 const WORKS_QUERY_MAX_LIMIT = 100
@@ -65,5 +65,10 @@ export async function downloadWorkFile(workId: number) {
     responseType: 'blob',
   })
   await assertBlobNotApiError(response.data, response.headers['content-type'])
-  return response.data
+
+  const filename = parseAttachmentFilename(response.headers['content-disposition']) || `work-${workId}.docx`
+  return {
+    blob: response.data,
+    filename,
+  }
 }

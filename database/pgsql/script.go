@@ -312,6 +312,34 @@ func ListFlowMountsByFlow(flowID int) ([]model.FlowMount, error) {
 	return mounts, nil
 }
 
+func GetFlowMountByTarget(scope string, eventKey string, targetType string, targetID int) (model.FlowMount, error) {
+	var mount model.FlowMount
+	err := postgresDB.Where(
+		"scope = ? AND event_key = ? AND target_type = ? AND target_id = ?",
+		scope,
+		eventKey,
+		targetType,
+		targetID,
+	).First(&mount).Error
+	if err == nil {
+		return mount, nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.FlowMount{}, ErrFlowNotMounted
+	}
+
+	return model.FlowMount{}, uerr.NewError(err)
+}
+
+func SetFlowMountEnabled(mountID int, enabled bool) error {
+	err := postgresDB.Model(&model.FlowMount{}).Where("mount_id = ?", mountID).Update("is_enabled", enabled).Error
+	if err != nil {
+		return uerr.NewError(err)
+	}
+
+	return nil
+}
+
 func ResolveFlowForExecution(scope string, eventKey string, targetType string, targetID int) (model.ScriptFlow, []ResolvedFlowStep, error) {
 	mount, err := findMountedFlow(scope, eventKey, targetType, targetID)
 	if err != nil {

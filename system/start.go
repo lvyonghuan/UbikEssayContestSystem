@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	initContestRedisCacheFn = initContestRedisCache
-	initGlobalInfoRouterFn  = initGlobalInfoRouter
+	initContestRedisCacheFn     = initContestRedisCache
+	initContestEndBuiltinFlowFn = initContestEndBuiltinFlow
+	initGlobalInfoRouterFn      = initGlobalInfoRouter
 
 	getContestListForCacheFn = pgsql.GetContestList
 	getTracksByContestFn     = pgsql.GetTracksByContestID
@@ -26,6 +27,14 @@ func SysStart(apiConf conf.APIConfig) {
 	if err != nil {
 		parsedErr := uerr.ExtractError(err)
 		log.Logger.Error(errors.New("System start init contest redis cache error: " + parsedErr.Error()))
+		panic(parsedErr)
+	}
+
+	// 初始化比赛结束内置脚本与默认流程挂载
+	err = initContestEndBuiltinFlowFn()
+	if err != nil {
+		parsedErr := uerr.ExtractError(err)
+		log.Logger.Error(errors.New("System start init contest end builtin flow error: " + parsedErr.Error()))
 		panic(parsedErr)
 	}
 

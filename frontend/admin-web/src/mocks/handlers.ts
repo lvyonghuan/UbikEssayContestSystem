@@ -68,16 +68,6 @@ function toJsonObject(value: unknown): Record<string, unknown> {
     : {}
 }
 
-function findContestIdByTrackId(trackId: number) {
-  for (const [contestIdText, tracks] of Object.entries(mockTracksByContest)) {
-    const matched = tracks.find((track) => track.trackID === trackId)
-    if (matched) {
-      return Number(contestIdText)
-    }
-  }
-  return null
-}
-
 function getContestTrackIDs(contestId: number) {
   return (mockTracksByContest[contestId] || [])
     .map((track) => track.trackID)
@@ -822,7 +812,7 @@ export const handlers = [
       stepID: item.stepID || nextStepId++,
       scriptVersionID: item.scriptVersionID,
       isEnabled: item.isEnabled ?? true,
-      failureStrategy: item.failureStrategy || 'CONTINUE',
+      failureStrategy: item.failureStrategy || 'fail_close',
       inputTemplate: item.inputTemplate || item.stepConfig || {},
       timeoutMs: item.timeoutMs || 5000,
       stepConfig: item.inputTemplate || item.stepConfig || {},
@@ -848,18 +838,18 @@ export const handlers = [
       return HttpResponse.json({ code: 404, msg: '流程不存在' }, { status: 404 })
     }
 
-    const scope = payload.scope || payload.targetType || payload.containerType || 'global'
-    if (scope !== 'global' && scope !== 'contest' && scope !== 'track') {
-      return HttpResponse.json({ code: 400, msg: 'scope must be global/contest/track' }, { status: 400 })
+    const scope = payload.scope || 'submission'
+    if (scope !== 'submission' && scope !== 'system' && scope !== 'judge') {
+      return HttpResponse.json({ code: 400, msg: 'scope must be submission/system/judge' }, { status: 400 })
     }
 
-    const targetType = payload.targetType || payload.containerType || scope
-    const targetID = scope === 'global' ? 0 : payload.targetID ?? payload.containerID
-    if (scope !== 'global' && (!Number.isInteger(targetID) || Number(targetID) <= 0)) {
+    const targetType = payload.targetType || payload.containerType || 'global'
+    const targetID = targetType === 'global' ? 0 : payload.targetID ?? payload.containerID
+    if (targetType !== 'global' && (!Number.isInteger(targetID) || Number(targetID) <= 0)) {
       return HttpResponse.json({ code: 400, msg: 'targetID must be positive integer' }, { status: 400 })
     }
 
-    const eventKey = payload.eventKey || (flow.meta && typeof flow.meta.trigger === 'string' ? flow.meta.trigger : 'work_created')
+    const eventKey = payload.eventKey || (flow.meta && typeof flow.meta.trigger === 'string' ? flow.meta.trigger : 'file_post')
 
     const nextMount: FlowMount = {
       ...payload,

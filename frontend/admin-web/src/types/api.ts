@@ -134,7 +134,7 @@ export interface ScriptFlow {
   updatedAt?: string
 }
 
-export type FlowFailureStrategy = 'CONTINUE' | 'STOP' | 'RETRY'
+export type FlowFailureStrategy = 'fail_close' | 'fail_open' | 'retry'
 
 export interface FlowStep {
   stepID?: number
@@ -151,17 +151,18 @@ export interface FlowStep {
   extensionData?: JsonObject
 }
 
-export type FlowMountScope = 'global' | 'contest' | 'track'
+export type FlowMountScope = 'submission' | 'system' | 'judge'
+export type FlowMountTargetType = 'global' | 'contest' | 'track'
 
 export interface FlowMount {
   mountID?: number
   flowID?: number
   scope?: FlowMountScope | string
-  targetType?: string
+  targetType?: FlowMountTargetType | string
   targetID?: number
   eventKey?: string
   isEnabled?: boolean
-  containerType?: string
+  containerType?: FlowMountTargetType | string
   containerID?: number
   mountConfig?: JsonObject
   extensionData?: JsonObject

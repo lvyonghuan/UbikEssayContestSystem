@@ -39,6 +39,7 @@ func backupAPIHooks(t *testing.T) {
 	origCreateContestSrcFn := createContestSrcFn
 	origUpdateContestSrcFn := updateContestSrcFn
 	origDeleteContestSrcFn := deleteContestSrcFn
+	origReplayContestEndSrcFn := replayContestEndSrcFn
 	origCreateTrackSrcFn := createTrackSrcFn
 	origUpdateTrackSrcFn := updateTrackSrcFn
 	origDeleteTrackSrcFn := deleteTrackSrcFn
@@ -91,6 +92,7 @@ func backupAPIHooks(t *testing.T) {
 		createContestSrcFn = origCreateContestSrcFn
 		updateContestSrcFn = origUpdateContestSrcFn
 		deleteContestSrcFn = origDeleteContestSrcFn
+		replayContestEndSrcFn = origReplayContestEndSrcFn
 		createTrackSrcFn = origCreateTrackSrcFn
 		updateTrackSrcFn = origUpdateTrackSrcFn
 		deleteTrackSrcFn = origDeleteTrackSrcFn
@@ -162,6 +164,7 @@ func mockAuthAndSources(t *testing.T) string {
 	createContestSrcFn = func(adminID int, contest *model.Contest) error { return nil }
 	updateContestSrcFn = func(adminID int, contestID int, contest *model.Contest) error { return nil }
 	deleteContestSrcFn = func(adminID int, contestID int) error { return nil }
+	replayContestEndSrcFn = func(adminID int, contestID int, trackID int) error { return nil }
 	createTrackSrcFn = func(adminID int, track *model.Track) error { return nil }
 	updateTrackSrcFn = func(adminID int, trackID int, track *model.Track) error { return nil }
 	deleteTrackSrcFn = func(adminID int, trackID int) error { return nil }
@@ -342,6 +345,7 @@ func TestAdminRoutesSmokeSuccess(t *testing.T) {
 		{http.MethodPost, "/api/v1/admin/refresh", nil, "Bearer refresh-admin", false},
 		{http.MethodPost, "/api/v1/admin/contest", []byte(`{"contestName":"c"}`), "Bearer admin", false},
 		{http.MethodPut, "/api/v1/admin/contest/1", []byte(`{"contestName":"c2"}`), "Bearer admin", false},
+		{http.MethodPost, "/api/v1/admin/contest/1/replay-end", []byte(`{"trackID":1}`), "Bearer admin", false},
 		{http.MethodDelete, "/api/v1/admin/contest/1", nil, "Bearer admin", false},
 		{http.MethodPost, "/api/v1/admin/track", []byte(`{"trackName":"t"}`), "Bearer admin", false},
 		{http.MethodPut, "/api/v1/admin/track/1", []byte(`{"trackName":"t2"}`), "Bearer admin", false},

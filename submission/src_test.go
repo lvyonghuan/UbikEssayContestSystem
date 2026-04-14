@@ -431,7 +431,7 @@ func TestDeleteSubmissionSrcRemovesFiles(t *testing.T) {
 	readDirFn = os.ReadDir
 	removeFn = os.Remove
 
-	dir := filepath.Join(tmp, "submissions", "7", "9")
+	dir := filepath.Join(tmp, "files", "submissions", "7", "9")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}

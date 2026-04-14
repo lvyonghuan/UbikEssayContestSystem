@@ -42,6 +42,8 @@ func backupSrcHooks(t *testing.T) {
 	origDeleteTrackCacheFn := deleteTrackCacheFn
 	origRegisterContestEndScheduleFn := registerContestEndScheduleFn
 	origCancelContestEndScheduleFn := cancelContestEndScheduleFn
+	origRequestContestEndReplayFn := requestContestEndReplayFn
+	origResetContestEndStateByContestFn := resetContestEndStateByContestFn
 	origListAuthorsFn := listAuthorsFn
 	origGetAuthorByIDFn := getAuthorByIDFn
 	origUpdateAuthorByIDFn := updateAuthorByIDFn
@@ -71,6 +73,8 @@ func backupSrcHooks(t *testing.T) {
 	log.Logger = testLogger{}
 	registerContestEndScheduleFn = func(contest model.Contest) {}
 	cancelContestEndScheduleFn = func(contestID int) {}
+	requestContestEndReplayFn = func(contestID int, trackID int) error { return nil }
+	resetContestEndStateByContestFn = func(contestID int) error { return nil }
 
 	t.Cleanup(func() {
 		log.Logger = origLogger
@@ -88,6 +92,8 @@ func backupSrcHooks(t *testing.T) {
 		deleteTrackCacheFn = origDeleteTrackCacheFn
 		registerContestEndScheduleFn = origRegisterContestEndScheduleFn
 		cancelContestEndScheduleFn = origCancelContestEndScheduleFn
+		requestContestEndReplayFn = origRequestContestEndReplayFn
+		resetContestEndStateByContestFn = origResetContestEndStateByContestFn
 		listAuthorsFn = origListAuthorsFn
 		getAuthorByIDFn = origGetAuthorByIDFn
 		updateAuthorByIDFn = origUpdateAuthorByIDFn
@@ -165,6 +171,9 @@ func TestContestSrcCacheFlow(t *testing.T) {
 	updated := model.Contest{ContestID: 1, ContestName: "c"}
 	cacheCount := 0
 	logCount := 0
+	getContestByIDFn = func(contestID int) (model.Contest, error) {
+		return model.Contest{ContestID: contestID, ContestEndDate: time.Now().Add(24 * time.Hour)}, nil
+	}
 
 	updateContestFn = func(contestID int, contest *model.Contest) error {
 		if contestID != 1 || contest.ContestName != "c" {
@@ -204,6 +213,77 @@ func TestContestSrcCacheFlow(t *testing.T) {
 	}
 }
 
+func TestUpdateContestSrcResetsContestEndStateWhenEndDateChanged(t *testing.T) {
+	backupSrcHooks(t)
+
+	originalEnd := time.Now().Add(-24 * time.Hour).UTC()
+	updatedEnd := time.Now().Add(24 * time.Hour).UTC()
+	updated := model.Contest{ContestID: 1, ContestName: "restart", ContestEndDate: updatedEnd}
+
+	getContestByIDFn = func(contestID int) (model.Contest, error) {
+		return model.Contest{ContestID: contestID, ContestName: "old", ContestEndDate: originalEnd}, nil
+	}
+	updateContestFn = func(contestID int, contest *model.Contest) error { return nil }
+	getTracksByContestFn = func(contestID int) ([]model.Track, error) { return nil, nil }
+
+	resetCalls := 0
+	resetContestEndStateByContestFn = func(contestID int) error {
+		resetCalls++
+		if contestID != 1 {
+			t.Fatalf("unexpected contestID for reset: %d", contestID)
+		}
+		return nil
+	}
+
+	scheduleCalls := 0
+	registerContestEndScheduleFn = func(contest model.Contest) {
+		scheduleCalls++
+		if !contest.ContestEndDate.UTC().Equal(updatedEnd) {
+			t.Fatalf("unexpected scheduled contest end date: %s", contest.ContestEndDate)
+		}
+	}
+
+	createActionLogFn = func(adminID int, res, act string, details map[string]interface{}) {}
+
+	if err := updateContestSrc(8, 1, &updated); err != nil {
+		t.Fatalf("updateContestSrc failed: %v", err)
+	}
+	if resetCalls != 1 {
+		t.Fatalf("expected reset called once, got %d", resetCalls)
+	}
+	if scheduleCalls != 1 {
+		t.Fatalf("expected schedule registration once, got %d", scheduleCalls)
+	}
+}
+
+func TestUpdateContestSrcSkipsResetWhenEndDateUnchanged(t *testing.T) {
+	backupSrcHooks(t)
+
+	sharedEnd := time.Now().Add(24 * time.Hour).UTC()
+	updated := model.Contest{ContestID: 1, ContestName: "no-change", ContestEndDate: sharedEnd}
+
+	getContestByIDFn = func(contestID int) (model.Contest, error) {
+		return model.Contest{ContestID: contestID, ContestName: "old", ContestEndDate: sharedEnd}, nil
+	}
+	updateContestFn = func(contestID int, contest *model.Contest) error { return nil }
+	getTracksByContestFn = func(contestID int) ([]model.Track, error) { return nil, nil }
+
+	resetCalls := 0
+	resetContestEndStateByContestFn = func(contestID int) error {
+		resetCalls++
+		return nil
+	}
+	registerContestEndScheduleFn = func(contest model.Contest) {}
+	createActionLogFn = func(adminID int, res, act string, details map[string]interface{}) {}
+
+	if err := updateContestSrc(8, 1, &updated); err != nil {
+		t.Fatalf("updateContestSrc failed: %v", err)
+	}
+	if resetCalls != 0 {
+		t.Fatalf("expected reset not called, got %d", resetCalls)
+	}
+}
+
 func TestDeleteContestSrcCacheFlow(t *testing.T) {
 	backupSrcHooks(t)
 
@@ -225,6 +305,40 @@ func TestDeleteContestSrcCacheFlow(t *testing.T) {
 	}
 	if !deletedCacheIDs[10] || !deletedCacheIDs[11] {
 		t.Fatalf("expected both track caches deleted: %+v", deletedCacheIDs)
+	}
+}
+
+func TestReplayContestEndSrc(t *testing.T) {
+	backupSrcHooks(t)
+
+	replayCalls := 0
+	requestContestEndReplayFn = func(contestID int, trackID int) error {
+		replayCalls++
+		if contestID != 7 || trackID != 0 {
+			t.Fatalf("unexpected replay args: %d %d", contestID, trackID)
+		}
+		return nil
+	}
+
+	logged := false
+	createActionLogFn = func(adminID int, res, act string, details map[string]interface{}) {
+		logged = true
+		if adminID != 3 || res != _const.Contests || act != _const.Update {
+			t.Fatalf("unexpected action log args: %d %s %s", adminID, res, act)
+		}
+		if details["contest_id"] != "7" {
+			t.Fatalf("unexpected details: %+v", details)
+		}
+	}
+
+	if err := replayContestEndSrc(3, 7, 0); err != nil {
+		t.Fatalf("replayContestEndSrc failed: %v", err)
+	}
+	if replayCalls != 1 {
+		t.Fatalf("expected one replay call, got %d", replayCalls)
+	}
+	if !logged {
+		t.Fatal("expected action log to be written")
 	}
 }
 

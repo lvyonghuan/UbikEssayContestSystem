@@ -3,6 +3,7 @@ import { unwrapResponse } from '@/services/http/response'
 import type {
   ApiResponse,
   FlowMount,
+  FlowMountTargetType,
   FlowMountScope,
   FlowStep,
   JsonObject,
@@ -33,6 +34,13 @@ function asJsonObject(value: unknown): JsonObject | undefined {
 }
 
 function asMountScope(value: unknown): FlowMountScope | undefined {
+  if (value === 'submission' || value === 'system' || value === 'judge') {
+    return value
+  }
+  return undefined
+}
+
+function asMountTargetType(value: unknown): FlowMountTargetType | undefined {
   if (value === 'global' || value === 'contest' || value === 'track') {
     return value
   }
@@ -86,35 +94,25 @@ function normalizeStep(item: unknown): FlowStep | null {
   }
 }
 
-function inferScopeFromTarget(targetType: string | undefined): FlowMountScope {
-  if (targetType === 'contest') {
-    return 'contest'
-  }
-  if (targetType === 'track') {
-    return 'track'
-  }
-  return 'global'
-}
-
 function normalizeMount(item: unknown): FlowMount | null {
   const record = asRecord(item)
   if (!record) {
     return null
   }
 
-  const targetType = asString(record.targetType) ?? asString(record.containerType)
-  const scope = asMountScope(record.scope) ?? inferScopeFromTarget(targetType)
+  const targetType = asMountTargetType(record.targetType) ?? asMountTargetType(record.containerType)
+  const scope = asMountScope(record.scope) ?? 'submission'
   const targetID = asNumber(record.targetID) ?? asNumber(record.containerID)
 
   return {
     mountID: asNumber(record.mountID),
     flowID: asNumber(record.flowID),
     scope,
-    targetType: targetType ?? (scope === 'global' ? 'global' : scope),
+    targetType: targetType ?? 'global',
     targetID,
     eventKey: asString(record.eventKey),
     isEnabled: asBoolean(record.isEnabled),
-    containerType: targetType ?? (scope === 'global' ? 'global' : scope),
+    containerType: targetType ?? 'global',
     containerID: targetID,
     mountConfig: asJsonObject(record.mountConfig),
     extensionData: asJsonObject(record.extensionData),
@@ -152,10 +150,10 @@ function toStepPayload(payload: FlowStep[]) {
 
 function toMountPayload(payload: FlowMount) {
   const targetType = payload.targetType ?? payload.containerType
-  const scope = payload.scope ?? inferScopeFromTarget(targetType)
-  const fallbackTargetType = targetType ?? (scope === 'global' ? 'global' : scope)
+  const scope = payload.scope ?? 'submission'
+  const fallbackTargetType = targetType ?? 'global'
   const rawTargetID = payload.targetID ?? payload.containerID
-  const targetID = scope === 'global' ? rawTargetID ?? 0 : rawTargetID
+  const targetID = fallbackTargetType === 'global' ? rawTargetID ?? 0 : rawTargetID
 
   return {
     flowID: payload.flowID,
@@ -164,6 +162,69 @@ function toMountPayload(payload: FlowMount) {
     targetID,
     eventKey: payload.eventKey,
     isEnabled: payload.isEnabled,
+  }
+}
+
+export interface WordCountPresetPayload {
+  flow: ScriptFlow
+  steps: FlowStep[]
+  mount: FlowMount
+}
+
+export function buildSubmissionWordCountPreset(input: {
+  flowName: string
+  flowKey: string
+  scriptID: number
+  scriptVersionID: number
+  scope?: FlowMountScope
+  eventKey?: string
+  targetType: FlowMountTargetType
+  targetID: number
+  failureStrategy?: 'fail_close' | 'fail_open' | 'retry'
+  timeoutMs?: number
+}): WordCountPresetPayload {
+  const eventKey = (input.eventKey || 'file_post').trim()
+  const scope = input.scope || 'submission'
+  const failureStrategy = input.failureStrategy || 'fail_close'
+  const timeoutMs = input.timeoutMs && input.timeoutMs > 0 ? input.timeoutMs : 20000
+
+  return {
+    flow: {
+      flowName: input.flowName,
+      flowKey: input.flowKey,
+      description: '新手向导创建：投稿后字数统计',
+      flowDescription: '新手向导创建：投稿后字数统计',
+      isEnabled: true,
+      meta: {
+        trigger: eventKey,
+        preset: 'submission_word_count',
+        guided: true,
+      },
+      extensionData: {
+        trigger: eventKey,
+        preset: 'submission_word_count',
+        guided: true,
+      },
+    },
+    steps: [
+      {
+        stepOrder: 1,
+        stepName: 'count-docx-words',
+        scriptID: input.scriptID,
+        scriptVersionID: input.scriptVersionID,
+        isEnabled: true,
+        failureStrategy,
+        timeoutMs,
+        inputTemplate: {},
+      },
+    ],
+    mount: {
+      scope,
+      targetType: input.targetType,
+      targetID: input.targetType === 'global' ? 0 : input.targetID,
+      eventKey,
+      isEnabled: true,
+    },
   }
 }
 

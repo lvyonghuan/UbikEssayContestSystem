@@ -10,6 +10,7 @@ import (
 
 func backupSystemStartHooks(t *testing.T) {
 	origInitContestRedisCacheFn := initContestRedisCacheFn
+	origInitContestEndBuiltinFlowFn := initContestEndBuiltinFlowFn
 	origInitContestEndSchedulesFn := initContestEndSchedulesFn
 	origInitGlobalInfoRouterFn := initGlobalInfoRouterFn
 	origGetContestListForCacheFn := getContestListForCacheFn
@@ -18,6 +19,7 @@ func backupSystemStartHooks(t *testing.T) {
 
 	t.Cleanup(func() {
 		initContestRedisCacheFn = origInitContestRedisCacheFn
+		initContestEndBuiltinFlowFn = origInitContestEndBuiltinFlowFn
 		initContestEndSchedulesFn = origInitContestEndSchedulesFn
 		initGlobalInfoRouterFn = origInitGlobalInfoRouterFn
 		getContestListForCacheFn = origGetContestListForCacheFn
@@ -94,10 +96,15 @@ func TestSysStart(t *testing.T) {
 	backupSystemStartHooks(t)
 
 	cacheCalled := false
+	builtinFlowCalled := false
 	scheduleCalled := false
 	routerCalled := make(chan struct{}, 1)
 	initContestRedisCacheFn = func() error {
 		cacheCalled = true
+		return nil
+	}
+	initContestEndBuiltinFlowFn = func() error {
+		builtinFlowCalled = true
 		return nil
 	}
 	initContestEndSchedulesFn = func() error {
@@ -111,6 +118,9 @@ func TestSysStart(t *testing.T) {
 	SysStart(conf.APIConfig{GlobalInfoPort: "18888"})
 	if !cacheCalled {
 		t.Fatal("SysStart should initialize contest redis cache")
+	}
+	if !builtinFlowCalled {
+		t.Fatal("SysStart should initialize contest end builtin flow")
 	}
 	if !scheduleCalled {
 		t.Fatal("SysStart should initialize contest end schedules")
@@ -129,6 +139,7 @@ func TestSysStartPanicOnCacheInitFailure(t *testing.T) {
 	initContestRedisCacheFn = func() error {
 		return errors.New("boom")
 	}
+	initContestEndBuiltinFlowFn = func() error { return nil }
 
 	defer func() {
 		if r := recover(); r == nil {
@@ -143,6 +154,7 @@ func TestSysStartPanicOnScheduleInitFailure(t *testing.T) {
 	backupSystemStartHooks(t)
 
 	initContestRedisCacheFn = func() error { return nil }
+	initContestEndBuiltinFlowFn = func() error { return nil }
 	initContestEndSchedulesFn = func() error {
 		return errors.New("boom schedule")
 	}
@@ -150,6 +162,23 @@ func TestSysStartPanicOnScheduleInitFailure(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatal("SysStart should panic when contest end schedule initialization fails")
+		}
+	}()
+
+	SysStart(conf.APIConfig{})
+}
+
+func TestSysStartPanicOnBuiltinFlowInitFailure(t *testing.T) {
+	backupSystemStartHooks(t)
+
+	initContestRedisCacheFn = func() error { return nil }
+	initContestEndBuiltinFlowFn = func() error {
+		return errors.New("boom builtin flow")
+	}
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("SysStart should panic when contest end builtin flow initialization fails")
 		}
 	}()
 

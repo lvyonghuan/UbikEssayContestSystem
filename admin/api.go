@@ -2,6 +2,7 @@ package admin
 
 import (
 	"errors"
+	"io"
 	"main/conf"
 	_ "main/docs/API/Admin"
 	"main/model"
@@ -25,18 +26,19 @@ var (
 		return r.Run(":" + port)
 	}
 
-	loginSrcFn         = loginSrc
-	refreshTokenSrcFn  = refreshTokenSrc
-	createContestSrcFn = createContestSrc
-	updateContestSrcFn = updateContestSrc
-	deleteContestSrcFn = deleteContestSrc
-	createTrackSrcFn   = createTrackSrc
-	updateTrackSrcFn   = updateTrackSrc
-	deleteTrackSrcFn   = deleteTrackSrc
-	listAuthorsSrcFn   = listAuthorsSrc
-	getAuthorByIDSrcFn = getAuthorByIDSrc
-	updateAuthorSrcFn  = updateAuthorSrc
-	deleteAuthorSrcFn  = deleteAuthorSrc
+	loginSrcFn            = loginSrc
+	refreshTokenSrcFn     = refreshTokenSrc
+	createContestSrcFn    = createContestSrc
+	updateContestSrcFn    = updateContestSrc
+	deleteContestSrcFn    = deleteContestSrc
+	replayContestEndSrcFn = replayContestEndSrc
+	createTrackSrcFn      = createTrackSrc
+	updateTrackSrcFn      = updateTrackSrc
+	deleteTrackSrcFn      = deleteTrackSrc
+	listAuthorsSrcFn      = listAuthorsSrc
+	getAuthorByIDSrcFn    = getAuthorByIDSrc
+	updateAuthorSrcFn     = updateAuthorSrc
+	deleteAuthorSrcFn     = deleteAuthorSrc
 
 	getWorkByIDSrcFn     = getWorkByIDSrc
 	getWorkFilePathSrcFn = getWorkFilePathSrc
@@ -90,6 +92,7 @@ func buildAdminRouter() *gin.Engine {
 				contest := contests.Group("/:contest_id")
 				{
 					contest.PUT("", requirePermission(_const.PermContestUpdate), updateContest)
+					contest.POST("/replay-end", requirePermission(_const.PermContestUpdate), replayContestEnd)
 					contest.DELETE("", requirePermission(_const.PermContestDelete), deleteContest)
 				}
 			}
@@ -548,11 +551,25 @@ func updateContest(c *gin.Context) {
 		response.RespError(c, 500, "error: Update contest bind json error")
 		return
 	}
+	if log.Logger != nil {
+		log.Logger.Debug(
+			"contest_update_api_payload: contestID=" + strconv.Itoa(contestID) +
+				" start=" + formatContestTimeForDebug(contest.ContestStartDate) +
+				" end=" + formatContestTimeForDebug(contest.ContestEndDate) +
+				" name=" + strings.TrimSpace(contest.ContestName),
+		)
+	}
 
 	err = updateContestSrcFn(c.GetInt("admin_token_id"), contestID, &contest)
 	if err != nil {
+		if log.Logger != nil {
+			log.Logger.Warn("contest_update_api_failed: contestID=" + strconv.Itoa(contestID) + " err=" + err.Error())
+		}
 		response.RespError(c, 500, "error: Update contest error")
 		return
+	}
+	if log.Logger != nil {
+		log.Logger.Debug("contest_update_api_success: contestID=" + strconv.Itoa(contestID))
 	}
 
 	response.RespSuccess(c, contest)
@@ -582,6 +599,51 @@ func deleteContest(c *gin.Context) {
 	if err != nil {
 		response.RespError(c, 500, "error: Delete contest error")
 		return
+	}
+
+	response.RespSuccess(c, nil)
+}
+
+type contestEndReplayRequest struct {
+	TrackID int `json:"trackID"`
+}
+
+func replayContestEnd(c *gin.Context) {
+	contestIDStr := c.Param("contest_id")
+	contestID, err := strconv.Atoi(contestIDStr)
+	if err != nil || contestID <= 0 {
+		response.RespError(c, 400, "error: Invalid contest_id")
+		return
+	}
+
+	var req contestEndReplayRequest
+	err = c.ShouldBindJSON(&req)
+	if err != nil && !errors.Is(err, io.EOF) {
+		response.RespError(c, 400, "error: bad request")
+		return
+	}
+	if req.TrackID < 0 {
+		response.RespError(c, 400, "error: Invalid trackID")
+		return
+	}
+	if log.Logger != nil {
+		log.Logger.Debug("contest_end_replay_api_request: contestID=" + strconv.Itoa(contestID) + " trackID=" + strconv.Itoa(req.TrackID))
+	}
+
+	err = replayContestEndSrcFn(c.GetInt("admin_token_id"), contestID, req.TrackID)
+	if err != nil {
+		if log.Logger != nil {
+			log.Logger.Warn("contest_end_replay_api_failed: contestID=" + strconv.Itoa(contestID) + " trackID=" + strconv.Itoa(req.TrackID) + " err=" + err.Error())
+		}
+		if strings.Contains(strings.ToLower(err.Error()), "invalid") || strings.Contains(strings.ToLower(err.Error()), "not under contest") {
+			response.RespError(c, 400, err.Error())
+			return
+		}
+		response.RespError(c, 500, "error: Replay contest end error")
+		return
+	}
+	if log.Logger != nil {
+		log.Logger.Debug("contest_end_replay_api_success: contestID=" + strconv.Itoa(contestID) + " trackID=" + strconv.Itoa(req.TrackID))
 	}
 
 	response.RespSuccess(c, nil)

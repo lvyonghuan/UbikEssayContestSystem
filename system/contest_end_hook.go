@@ -22,7 +22,30 @@ import (
 )
 
 var (
-	getTracksByContestForEndFn    = pgsql.GetTracksByContestID
+	getTracksByContestForEndFn     = pgsql.GetTracksByContestID
+	getTrackByIDForEndFn           = pgsql.GetTrackByID
+	getContestEndExecutionForEndFn = func(contestID int, trackID int) (contestEndExecutionState, error) {
+		track, err := getTrackByIDForEndFn(trackID)
+		if err != nil {
+			return contestEndExecutionState{}, err
+		}
+		if contestID > 0 && track.ContestID > 0 && track.ContestID != contestID {
+			return contestEndExecutionState{}, errors.New("track " + strconv.Itoa(trackID) + " is not under contest " + strconv.Itoa(contestID))
+		}
+		return contestEndStateFromTrack(track), nil
+	}
+	markTrackContestEndRunningForEndFn = pgsql.MarkTrackContestEndRunning
+	markContestEndRunningForEndFn      = func(contestID int, trackID int, triggerSource string) error {
+		return markTrackContestEndRunningForEndFn(trackID, triggerSource)
+	}
+	markTrackContestEndSuccessForEndFn = pgsql.MarkTrackContestEndSuccess
+	markContestEndSuccessForEndFn      = func(contestID int, trackID int, triggerSource string) error {
+		return markTrackContestEndSuccessForEndFn(trackID, triggerSource)
+	}
+	markTrackContestEndFailedForEndFn = pgsql.MarkTrackContestEndFailed
+	markContestEndFailedForEndFn      = func(contestID int, trackID int, triggerSource string, lastError string) error {
+		return markTrackContestEndFailedForEndFn(trackID, triggerSource, lastError)
+	}
 	resolveFlowChainForEndFn      = pgsql.ResolveFlowChainForExecution
 	listReviewEventsForEndFn      = pgsql.ListReviewEventsByTrackID
 	listReviewWorksForEndFn       = pgsql.GetReviewWorksByEvent
@@ -40,54 +63,155 @@ var (
 	openFileForEndFn   = os.Open
 	createFileForEndFn = os.Create
 	copyFileForEndFn   = io.Copy
-	removeFileForEndFn = os.Remove
-	sleepForEndFn      = time.Sleep
-
-	cleanupRetryBackoffsForEnd = []time.Duration{100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond}
 
 	executeScriptChainForEndFn = func(chain scriptflow.ChainConfig, input scriptflow.ExecuteInput) (scriptflow.ChainResult, error) {
-		executor := scriptflow.NewExecutor(".", 5*time.Second, []string{"python3", "python", "bash", "sh", "node"})
+		executor := newContestEndExecutor()
 		return executor.ExecuteChain(context.Background(), chain, input)
 	}
 )
 
 func executeContestEndForContest(contestID int) error {
+	return executeContestEndForContestWithSource(contestID, contestEndTriggerSourceSystem)
+}
+
+func executeContestEndForContestWithSource(contestID int, triggerSource string) error {
 	tracks, err := getTracksByContestForEndFn(contestID)
 	if err != nil {
 		return err
 	}
+	if log.Logger != nil {
+		log.Logger.Debug(fmt.Sprintf(
+			"contest_end_contest_start: contestID=%d triggerSource=%s tracks=%d",
+			contestID,
+			strings.TrimSpace(triggerSource),
+			len(tracks),
+		))
+	}
 
 	var firstErr error
+	runCount := 0
+	failedCount := 0
+	skippedInvalidTrackCount := 0
 	for _, track := range tracks {
 		if track.TrackID <= 0 {
+			skippedInvalidTrackCount++
+			if log.Logger != nil {
+				log.Logger.Debug(fmt.Sprintf(
+					"contest_end_track_skip_invalid: contestID=%d trackID=%d",
+					contestID,
+					track.TrackID,
+				))
+			}
 			continue
 		}
-		if err := runContestEndHookForTrack(contestID, track.TrackID); err != nil {
+		runCount++
+		if log.Logger != nil {
+			log.Logger.Debug(fmt.Sprintf(
+				"contest_end_track_dispatch: contestID=%d trackID=%d triggerSource=%s",
+				contestID,
+				track.TrackID,
+				strings.TrimSpace(triggerSource),
+			))
+		}
+		if err := runContestEndHookForTrackWithSource(contestID, track.TrackID, triggerSource); err != nil {
+			failedCount++
 			log.Logger.Warn("Run contest_end hook for track failed: " + err.Error())
 			if firstErr == nil {
 				firstErr = err
 			}
 		}
 	}
+	if log.Logger != nil {
+		log.Logger.Debug(fmt.Sprintf(
+			"contest_end_contest_finish: contestID=%d triggerSource=%s dispatched=%d failed=%d skippedInvalid=%d",
+			contestID,
+			strings.TrimSpace(triggerSource),
+			runCount,
+			failedCount,
+			skippedInvalidTrackCount,
+		))
+	}
 
 	return firstErr
 }
 
 func runContestEndHookForTrack(contestID int, trackID int) error {
-	if err := regenerateTrackReviewResults(trackID); err != nil {
+	return runContestEndHookForTrackWithSource(contestID, trackID, contestEndTriggerSourceSystem)
+}
+
+func runContestEndHookForTrackWithSource(contestID int, trackID int, triggerSource string) error {
+	shouldExecute, state, hasState, err := shouldRunContestEndForTrackForEnd(contestID, trackID)
+	if err != nil {
 		return err
 	}
+	if log.Logger != nil {
+		if hasState {
+			log.Logger.Debug(fmt.Sprintf(
+				"contest_end_track_gate: contestID=%d trackID=%d triggerSource=%s shouldExecute=%t %s",
+				contestID,
+				trackID,
+				strings.TrimSpace(triggerSource),
+				shouldExecute,
+				formatContestEndStateForLog(state),
+			))
+		} else {
+			log.Logger.Debug(fmt.Sprintf(
+				"contest_end_track_gate: contestID=%d trackID=%d triggerSource=%s shouldExecute=%t state=not-found",
+				contestID,
+				trackID,
+				strings.TrimSpace(triggerSource),
+				shouldExecute,
+			))
+		}
+	}
+	if !shouldExecute {
+		if log.Logger != nil {
+			log.Logger.Debug(fmt.Sprintf(
+				"contest_end_track_skip_by_state: contestID=%d trackID=%d triggerSource=%s",
+				contestID,
+				trackID,
+				strings.TrimSpace(triggerSource),
+			))
+		}
+		return nil
+	}
 
-	if err := exportTrackWorkPDFs(contestID, trackID); err != nil {
+	err = markContestEndRunningForEndFn(contestID, trackID, triggerSource)
+	if err != nil {
 		return err
+	}
+	if log.Logger != nil {
+		log.Logger.Debug(fmt.Sprintf(
+			"contest_end_track_mark_running: contestID=%d trackID=%d triggerSource=%s",
+			contestID,
+			trackID,
+			strings.TrimSpace(triggerSource),
+		))
 	}
 
 	chains, err := resolveFlowChainForEndFn(scriptflow.ScopeSystem, scriptflow.EventContestEnd, contestID, trackID)
 	if err != nil {
 		if errors.Is(err, pgsql.ErrFlowNotMounted) {
-			return nil
+			if log.Logger != nil {
+				log.Logger.Warn(
+					"contest_end_flow_not_mounted: skip flow execution and mark success; contestID=" + strconv.Itoa(contestID) +
+						" trackID=" + strconv.Itoa(trackID) +
+						" triggerSource=" + strings.TrimSpace(triggerSource),
+				)
+			}
+			return markContestEndSuccessForEndFn(contestID, trackID, triggerSource)
 		}
+		markContestEndFailedIfNeeded(contestID, trackID, triggerSource, err)
 		return err
+	}
+	if log.Logger != nil {
+		log.Logger.Debug(fmt.Sprintf(
+			"contest_end_flow_chain_resolved: contestID=%d trackID=%d chains=%d flows=%s",
+			contestID,
+			trackID,
+			len(chains),
+			summarizeFlowChainsForEnd(chains),
+		))
 	}
 
 	payload := map[string]any{
@@ -97,6 +221,17 @@ func runContestEndHookForTrack(contestID int, trackID int) error {
 	}
 
 	for _, chain := range chains {
+		if log.Logger != nil {
+			log.Logger.Debug(fmt.Sprintf(
+				"contest_end_flow_chain_start: contestID=%d trackID=%d flowKey=%s targetType=%s targetID=%d steps=%d",
+				contestID,
+				trackID,
+				chain.Flow.FlowKey,
+				chain.TargetType,
+				chain.TargetID,
+				len(chain.Steps),
+			))
+		}
 		result, err := executeResolvedContestEndFlow(contestID, trackID, chain.Flow, chain.Steps, payload)
 		if err != nil {
 			if errors.Is(err, scriptflow.ErrExecutionBlocked) {
@@ -104,8 +239,11 @@ func runContestEndHookForTrack(contestID int, trackID int) error {
 				if reason == "" {
 					reason = "contest_end blocked by script flow"
 				}
-				return uerr.NewError(errors.New(reason))
+				blockedErr := uerr.NewError(errors.New(reason))
+				markContestEndFailedIfNeeded(contestID, trackID, triggerSource, blockedErr)
+				return blockedErr
 			}
+			markContestEndFailedIfNeeded(contestID, trackID, triggerSource, err)
 			return err
 		}
 		if !result.Allowed {
@@ -113,11 +251,63 @@ func runContestEndHookForTrack(contestID int, trackID int) error {
 			if reason == "" {
 				reason = "contest_end blocked by script flow"
 			}
-			return uerr.NewError(errors.New(reason))
+			blockedErr := uerr.NewError(errors.New(reason))
+			markContestEndFailedIfNeeded(contestID, trackID, triggerSource, blockedErr)
+			return blockedErr
+		}
+		if log.Logger != nil {
+			log.Logger.Debug(fmt.Sprintf(
+				"contest_end_flow_chain_finish: contestID=%d trackID=%d flowKey=%s allowed=%t reason=%q",
+				contestID,
+				trackID,
+				chain.Flow.FlowKey,
+				result.Allowed,
+				strings.TrimSpace(result.Reason),
+			))
 		}
 	}
 
-	return nil
+	if log.Logger != nil {
+		log.Logger.Debug(fmt.Sprintf(
+			"contest_end_track_mark_success: contestID=%d trackID=%d triggerSource=%s",
+			contestID,
+			trackID,
+			strings.TrimSpace(triggerSource),
+		))
+	}
+	return markContestEndSuccessForEndFn(contestID, trackID, triggerSource)
+}
+
+func shouldRunContestEndForTrackForEnd(contestID int, trackID int) (bool, contestEndExecutionState, bool, error) {
+	state, err := getContestEndExecutionForEndFn(contestID, trackID)
+	if err != nil {
+		if isContestEndExecutionNotFound(err) {
+			return true, contestEndExecutionState{}, false, nil
+		}
+		return false, contestEndExecutionState{}, false, err
+	}
+
+	return shouldExecuteContestEndByState(state, time.Now().UTC()), state, true, nil
+}
+
+func markContestEndFailedIfNeeded(contestID int, trackID int, triggerSource string, runErr error) {
+	if runErr == nil {
+		return
+	}
+	if log.Logger != nil {
+		log.Logger.Warn(fmt.Sprintf(
+			"contest_end_track_mark_failed: contestID=%d trackID=%d triggerSource=%s err=%s",
+			contestID,
+			trackID,
+			strings.TrimSpace(triggerSource),
+			runErr.Error(),
+		))
+	}
+
+	err := markContestEndFailedForEndFn(contestID, trackID, triggerSource, runErr.Error())
+	if err != nil && log.Logger != nil {
+		log.Logger.Warn("Mark contest_end failed status error: " + err.Error())
+	}
 }
 
 func executeResolvedContestEndFlow(
@@ -127,6 +317,16 @@ func executeResolvedContestEndFlow(
 	steps []pgsql.ResolvedFlowStep,
 	payload map[string]any,
 ) (scriptflow.ChainResult, error) {
+	if log.Logger != nil {
+		log.Logger.Debug(fmt.Sprintf(
+			"contest_end_flow_execute_start: contestID=%d trackID=%d flowKey=%s stepCount=%d stepNames=%s",
+			contestID,
+			trackID,
+			flow.FlowKey,
+			len(steps),
+			summarizeFlowStepNamesForEnd(steps),
+		))
+	}
 	chain := scriptflow.ChainConfig{
 		Scope:    scriptflow.ScopeSystem,
 		EventKey: scriptflow.EventContestEnd,
@@ -168,7 +368,29 @@ func executeResolvedContestEndFlow(
 		Payload: payload,
 	})
 	if err != nil {
+		if log.Logger != nil {
+			log.Logger.Warn(fmt.Sprintf(
+				"contest_end_flow_execute_fail: contestID=%d trackID=%d flowKey=%s err=%s allowed=%t reason=%q",
+				contestID,
+				trackID,
+				flow.FlowKey,
+				err.Error(),
+				result.Allowed,
+				strings.TrimSpace(result.Reason),
+			))
+		}
 		return result, err
+	}
+	if log.Logger != nil {
+		log.Logger.Debug(fmt.Sprintf(
+			"contest_end_flow_execute_finish: contestID=%d trackID=%d flowKey=%s allowed=%t reason=%q patchKeys=%s",
+			contestID,
+			trackID,
+			flow.FlowKey,
+			result.Allowed,
+			strings.TrimSpace(result.Reason),
+			summarizePatchKeysForEnd(result.Patch),
+		))
 	}
 
 	return result, nil
@@ -262,21 +484,72 @@ func exportTrackWorkPDFs(contestID int, trackID int) error {
 	if err != nil {
 		return err
 	}
+	if log.Logger != nil {
+		log.Logger.Debug(fmt.Sprintf(
+			"contest_end_pdf_export_start: contestID=%d trackID=%d works=%d",
+			contestID,
+			trackID,
+			len(works),
+		))
+	}
+
+	exportedCount := 0
+	missingSourceCount := 0
+	skippedNonDocxCount := 0
 
 	for _, work := range works {
 		if work.WorkID <= 0 || work.TrackID <= 0 || work.AuthorID <= 0 {
+			if log.Logger != nil {
+				log.Logger.Debug(fmt.Sprintf(
+					"contest_end_pdf_export_skip_invalid_work: contestID=%d trackID=%d workID=%d authorID=%d",
+					contestID,
+					trackID,
+					work.WorkID,
+					work.AuthorID,
+				))
+			}
 			continue
 		}
 
 		srcPath, err := resolveSubmissionFileForEndFn(work)
 		if err != nil {
 			if os.IsNotExist(err) {
+				missingSourceCount++
+				if log.Logger != nil {
+					log.Logger.Debug(fmt.Sprintf(
+						"contest_end_pdf_export_missing_source: contestID=%d trackID=%d workID=%d authorID=%d",
+						contestID,
+						trackID,
+						work.WorkID,
+						work.AuthorID,
+					))
+				}
 				continue
 			}
 			return err
 		}
+		if log.Logger != nil {
+			log.Logger.Debug(fmt.Sprintf(
+				"contest_end_pdf_export_source_resolved: contestID=%d trackID=%d workID=%d authorID=%d src=%s",
+				contestID,
+				trackID,
+				work.WorkID,
+				work.AuthorID,
+				srcPath,
+			))
+		}
 
 		if strings.ToLower(filepath.Ext(srcPath)) != ".docx" {
+			skippedNonDocxCount++
+			if log.Logger != nil {
+				log.Logger.Debug(fmt.Sprintf(
+					"contest_end_pdf_export_skip_non_docx: contestID=%d trackID=%d workID=%d src=%s",
+					contestID,
+					trackID,
+					work.WorkID,
+					srcPath,
+				))
+			}
 			continue
 		}
 
@@ -286,8 +559,52 @@ func exportTrackWorkPDFs(contestID int, trackID int) error {
 		}
 
 		dstPath := filepath.Join(dstDir, strconv.Itoa(work.WorkID)+".pdf")
+		if log.Logger != nil {
+			log.Logger.Debug(fmt.Sprintf(
+				"contest_end_pdf_convert_start: contestID=%d trackID=%d workID=%d src=%s dst=%s",
+				contestID,
+				trackID,
+				work.WorkID,
+				srcPath,
+				dstPath,
+			))
+		}
 		if err := convertDocxToPDFForEndFn(context.Background(), srcPath, dstPath); err != nil {
 			return err
+		}
+		if log.Logger != nil {
+			log.Logger.Debug(fmt.Sprintf(
+				"contest_end_pdf_convert_success: contestID=%d trackID=%d workID=%d dst=%s",
+				contestID,
+				trackID,
+				work.WorkID,
+				dstPath,
+			))
+		}
+
+		exportedCount++
+	}
+
+	if log.Logger != nil {
+		log.Logger.Debug(fmt.Sprintf(
+			"contest_end_pdf_export_summary: contestID=%d trackID=%d works=%d exported=%d missing_source=%d skipped_non_docx=%d",
+			contestID,
+			trackID,
+			len(works),
+			exportedCount,
+			missingSourceCount,
+			skippedNonDocxCount,
+		))
+
+		if len(works) > 0 && exportedCount == 0 && (missingSourceCount > 0 || skippedNonDocxCount > 0) {
+			log.Logger.Warn(fmt.Sprintf(
+				"contest_end_pdf_export_zero_output: contestID=%d trackID=%d works=%d missing_source=%d skipped_non_docx=%d",
+				contestID,
+				trackID,
+				len(works),
+				missingSourceCount,
+				skippedNonDocxCount,
+			))
 		}
 	}
 
@@ -299,6 +616,15 @@ func resolveSubmissionFileForEnd(work model.Work) (string, error) {
 	entries, err := readDirForEndFn(dstDir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if log.Logger != nil {
+				log.Logger.Warn(fmt.Sprintf(
+					"contest_end_submission_dir_not_found: trackID=%d authorID=%d workID=%d dir=%s",
+					work.TrackID,
+					work.AuthorID,
+					work.WorkID,
+					dstDir,
+				))
+			}
 			return "", os.ErrNotExist
 		}
 		return "", uerr.NewError(err)
@@ -308,6 +634,8 @@ func resolveSubmissionFileForEnd(work model.Work) (string, error) {
 	selectedName := ""
 	selectedTime := time.Time{}
 	hasDocx := false
+	prefixMatches := 0
+	scannedFileNames := make([]string, 0, len(entries))
 
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -315,9 +643,11 @@ func resolveSubmissionFileForEnd(work model.Work) (string, error) {
 		}
 
 		name := entry.Name()
+		scannedFileNames = append(scannedFileNames, name)
 		if !strings.HasPrefix(name, prefix) {
 			continue
 		}
+		prefixMatches++
 
 		info, infoErr := entry.Info()
 		if infoErr != nil {
@@ -347,10 +677,46 @@ func resolveSubmissionFileForEnd(work model.Work) (string, error) {
 	}
 
 	if selectedName == "" {
+		if log.Logger != nil {
+			log.Logger.Warn(fmt.Sprintf(
+				"contest_end_submission_file_not_found: trackID=%d authorID=%d workID=%d dir=%s prefix=%s scanned=%d prefix_matches=%d entries=%s",
+				work.TrackID,
+				work.AuthorID,
+				work.WorkID,
+				dstDir,
+				prefix,
+				len(scannedFileNames),
+				prefixMatches,
+				summarizeEntryNamesForEnd(scannedFileNames, 20),
+			))
+		}
 		return "", os.ErrNotExist
+	}
+	if log.Logger != nil {
+		log.Logger.Debug(fmt.Sprintf(
+			"contest_end_submission_file_selected: trackID=%d authorID=%d workID=%d selected=%s dir=%s scanned=%d prefix_matches=%d prefer_docx=%t",
+			work.TrackID,
+			work.AuthorID,
+			work.WorkID,
+			selectedName,
+			dstDir,
+			len(scannedFileNames),
+			prefixMatches,
+			hasDocx,
+		))
 	}
 
 	return filepath.Join(dstDir, selectedName), nil
+}
+
+func summarizeEntryNamesForEnd(names []string, limit int) string {
+	if len(names) == 0 {
+		return "[]"
+	}
+	if limit <= 0 || len(names) <= limit {
+		return strings.Join(names, ",")
+	}
+	return strings.Join(names[:limit], ",") + ",..."
 }
 
 func buildOfficeConverterCandidates() []string {
@@ -420,14 +786,33 @@ func convertDocxToPDF(ctx context.Context, srcDocxPath string, dstPDFPath string
 	defer cancel()
 
 	binaries := buildOfficeConverterCandidates()
+	if log.Logger != nil {
+		log.Logger.Debug(fmt.Sprintf(
+			"contest_end_pdf_converter_candidates: src=%s dst=%s candidates=%s",
+			srcDocxPath,
+			dstPDFPath,
+			strings.Join(binaries, ","),
+		))
+	}
 	var convertErr error
 	attemptErrors := make([]string, 0, len(binaries))
-	for _, binary := range binaries {
+	for idx, binary := range binaries {
 		resolvedBinary := binary
 		if !strings.ContainsAny(binary, `\\/`) {
 			if lookedUpBinary, lookErr := exec.LookPath(binary); lookErr == nil {
 				resolvedBinary = lookedUpBinary
 			}
+		}
+		if log.Logger != nil {
+			log.Logger.Debug(fmt.Sprintf(
+				"contest_end_pdf_convert_attempt: attempt=%d/%d binary=%s resolved=%s src=%s dst=%s",
+				idx+1,
+				len(binaries),
+				binary,
+				resolvedBinary,
+				srcDocxPath,
+				dstPDFPath,
+			))
 		}
 
 		cmd := exec.CommandContext(
@@ -444,12 +829,29 @@ func convertDocxToPDF(ctx context.Context, srcDocxPath string, dstPDFPath string
 		output, err := cmd.CombinedOutput()
 		if err == nil {
 			convertErr = nil
+			if log.Logger != nil {
+				log.Logger.Debug(fmt.Sprintf(
+					"contest_end_pdf_convert_attempt_success: attempt=%d/%d binary=%s",
+					idx+1,
+					len(binaries),
+					resolvedBinary,
+				))
+			}
 			break
 		}
 
 		trimmedOutput := trimCommandOutput(output)
 		convertErr = fmt.Errorf("%s convert failed: %w, output: %s", resolvedBinary, err, trimmedOutput)
 		attemptErrors = append(attemptErrors, convertErr.Error())
+		if log.Logger != nil {
+			log.Logger.Debug(fmt.Sprintf(
+				"contest_end_pdf_convert_attempt_fail: attempt=%d/%d binary=%s err=%s",
+				idx+1,
+				len(binaries),
+				resolvedBinary,
+				convertErr.Error(),
+			))
+		}
 	}
 	if convertErr != nil {
 		pathHasLibreOffice := strings.Contains(strings.ToLower(os.Getenv("PATH")), "libreoffice")
@@ -463,8 +865,52 @@ func convertDocxToPDF(ctx context.Context, srcDocxPath string, dstPDFPath string
 	if _, err := os.Stat(generated); err != nil {
 		return uerr.NewError(fmt.Errorf("pdf not generated: %w", err))
 	}
+	if log.Logger != nil {
+		log.Logger.Debug(fmt.Sprintf(
+			"contest_end_pdf_generated_tmp: src=%s generated=%s",
+			srcDocxPath,
+			generated,
+		))
+	}
 
 	return moveFileForEnd(generated, dstPDFPath)
+}
+
+func summarizeFlowChainsForEnd(chains []pgsql.ResolvedFlowChain) string {
+	if len(chains) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(chains))
+	for _, chain := range chains {
+		parts = append(parts, fmt.Sprintf("%s(%s:%d,steps=%d)", chain.Flow.FlowKey, chain.TargetType, chain.TargetID, len(chain.Steps)))
+	}
+	return strings.Join(parts, ",")
+}
+
+func summarizeFlowStepNamesForEnd(steps []pgsql.ResolvedFlowStep) string {
+	if len(steps) == 0 {
+		return "[]"
+	}
+	names := make([]string, 0, len(steps))
+	for _, step := range steps {
+		name := strings.TrimSpace(step.Step.StepName)
+		if name == "" {
+			name = "step_" + strconv.Itoa(step.Step.StepOrder)
+		}
+		names = append(names, name)
+	}
+	return strings.Join(names, ",")
+}
+
+func summarizePatchKeysForEnd(patch map[string]any) string {
+	if len(patch) == 0 {
+		return "[]"
+	}
+	keys := make([]string, 0, len(patch))
+	for key := range patch {
+		keys = append(keys, key)
+	}
+	return strings.Join(keys, ",")
 }
 
 func moveFileForEnd(srcPath string, dstPath string) error {
@@ -489,50 +935,7 @@ func moveFileForEnd(srcPath string, dstPath string) error {
 		return uerr.NewError(err)
 	}
 
-	// The temporary workspace is removed by convertDocxToPDF defer cleanup.
-	// A transient lock on Windows should not fail contest_end once dst file is copied.
-	cleanupAttempts, cleanupErr := removeFileForEndWithRetry(srcPath)
-	if cleanupErr != nil {
-		if log.Logger != nil {
-			log.Logger.Warn(fmt.Sprintf(
-				"contest_end temporary pdf cleanup failed after %d attempts: src=%s dst=%s err=%s",
-				cleanupAttempts,
-				srcPath,
-				dstPath,
-				cleanupErr.Error(),
-			))
-		}
-	} else if cleanupAttempts > 1 {
-		if log.Logger != nil {
-			log.Logger.Debug(fmt.Sprintf(
-				"contest_end temporary pdf cleanup recovered after retry: attempts=%d src=%s",
-				cleanupAttempts,
-				srcPath,
-			))
-		}
-	}
-
 	return nil
-}
-
-func removeFileForEndWithRetry(srcPath string) (int, error) {
-	attempts := 0
-	for {
-		attempts++
-		err := removeFileForEndFn(srcPath)
-		if err == nil {
-			return attempts, nil
-		}
-
-		backoffIdx := attempts - 1
-		if backoffIdx >= len(cleanupRetryBackoffsForEnd) {
-			return attempts, err
-		}
-
-		if sleepForEndFn != nil {
-			sleepForEndFn(cleanupRetryBackoffsForEnd[backoffIdx])
-		}
-	}
 }
 
 func toFloat64ForEnd(value any) float64 {

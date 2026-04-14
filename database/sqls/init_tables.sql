@@ -14,6 +14,13 @@ CREATE TABLE tracks (
     contest_id INT,
     track_description TEXT,
     track_settings JSONB,
+    contest_end_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    contest_end_attempt_count INT NOT NULL DEFAULT 0,
+    contest_end_last_error TEXT,
+    contest_end_last_started_at TIMESTAMP NULL,
+    contest_end_last_finished_at TIMESTAMP NULL,
+    contest_end_trigger_source VARCHAR(32) NOT NULL DEFAULT 'system',
+    contest_end_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (contest_id) REFERENCES contests(contest_id) ON DELETE CASCADE
 );
 

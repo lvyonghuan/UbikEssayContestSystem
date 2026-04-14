@@ -3,8 +3,11 @@ package pgsql
 import (
 	"main/conf"
 	"main/model"
+	"strings"
+	"time"
 
 	"github.com/lvyonghuan/Ubik-Util/uerr"
+	"gorm.io/gorm"
 )
 
 func getGlobalConfig() (model.GlobalConfig, error) {
@@ -112,4 +115,117 @@ func GetTracksByContestID(contestID int) ([]model.Track, error) {
 	}
 
 	return tracks, nil
+}
+
+func MarkTrackContestEndRunning(trackID int, triggerSource string) error {
+	now := time.Now().UTC()
+	source := normalizeContestEndTriggerSource(triggerSource)
+
+	result := postgresDB.Model(&model.Track{}).Where("track_id = ?", trackID).Updates(map[string]any{
+		"contest_end_status":           "running",
+		"contest_end_attempt_count":    gorm.Expr("COALESCE(contest_end_attempt_count, 0) + 1"),
+		"contest_end_last_error":       "",
+		"contest_end_last_started_at":  now,
+		"contest_end_last_finished_at": nil,
+		"contest_end_trigger_source":   source,
+		"contest_end_updated_at":       now,
+	})
+	if result.Error != nil {
+		return uerr.NewError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return uerr.NewError(gorm.ErrRecordNotFound)
+	}
+
+	return nil
+}
+
+func MarkTrackContestEndSuccess(trackID int, triggerSource string) error {
+	now := time.Now().UTC()
+	source := normalizeContestEndTriggerSource(triggerSource)
+
+	result := postgresDB.Model(&model.Track{}).Where("track_id = ?", trackID).Updates(map[string]any{
+		"contest_end_status":           "success",
+		"contest_end_last_error":       "",
+		"contest_end_last_finished_at": now,
+		"contest_end_trigger_source":   source,
+		"contest_end_updated_at":       now,
+	})
+	if result.Error != nil {
+		return uerr.NewError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return uerr.NewError(gorm.ErrRecordNotFound)
+	}
+
+	return nil
+}
+
+func MarkTrackContestEndFailed(trackID int, triggerSource string, lastError string) error {
+	now := time.Now().UTC()
+	source := normalizeContestEndTriggerSource(triggerSource)
+
+	result := postgresDB.Model(&model.Track{}).Where("track_id = ?", trackID).Updates(map[string]any{
+		"contest_end_status":           "failed",
+		"contest_end_last_error":       strings.TrimSpace(lastError),
+		"contest_end_last_finished_at": now,
+		"contest_end_trigger_source":   source,
+		"contest_end_updated_at":       now,
+	})
+	if result.Error != nil {
+		return uerr.NewError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return uerr.NewError(gorm.ErrRecordNotFound)
+	}
+
+	return nil
+}
+
+func MarkTrackContestEndReplayRequested(trackID int, triggerSource string) error {
+	now := time.Now().UTC()
+	source := normalizeContestEndTriggerSource(triggerSource)
+
+	result := postgresDB.Model(&model.Track{}).Where("track_id = ?", trackID).Updates(map[string]any{
+		"contest_end_status":         "replay_requested",
+		"contest_end_last_error":     "",
+		"contest_end_trigger_source": source,
+		"contest_end_updated_at":     now,
+	})
+	if result.Error != nil {
+		return uerr.NewError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return uerr.NewError(gorm.ErrRecordNotFound)
+	}
+
+	return nil
+}
+
+func ResetContestEndExecutionByContest(contestID int) error {
+	now := time.Now().UTC()
+
+	result := postgresDB.Model(&model.Track{}).Where("contest_id = ?", contestID).Updates(map[string]any{
+		"contest_end_status":           "pending",
+		"contest_end_attempt_count":    0,
+		"contest_end_last_error":       "",
+		"contest_end_last_started_at":  nil,
+		"contest_end_last_finished_at": nil,
+		"contest_end_trigger_source":   "system",
+		"contest_end_updated_at":       now,
+	})
+	if result.Error != nil {
+		return uerr.NewError(result.Error)
+	}
+
+	return nil
+}
+
+func normalizeContestEndTriggerSource(triggerSource string) string {
+	value := strings.TrimSpace(triggerSource)
+	if value == "" {
+		return "system"
+	}
+
+	return value
 }

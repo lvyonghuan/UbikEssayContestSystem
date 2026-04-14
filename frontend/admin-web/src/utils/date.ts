@@ -1,10 +1,6 @@
 const CHINA_TIMEZONE = 'Asia/Shanghai'
 const CHINA_OFFSET = '+08:00'
 
-function pad(value: number) {
-  return String(value).padStart(2, '0')
-}
-
 function toChinaParts(date: Date) {
   const parts = new Intl.DateTimeFormat('zh-CN', {
     timeZone: CHINA_TIMEZONE,
